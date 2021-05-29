@@ -3,8 +3,8 @@ from pathlib import Path
 
 import yaml
 
-from yukarin_soso.config import Config
-from yukarin_soso.trainer import create_trainer
+from yukarin_sosoa.config import Config
+from yukarin_sosoa.trainer import create_trainer
 
 
 def train(

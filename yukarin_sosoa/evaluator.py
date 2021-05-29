@@ -4,7 +4,7 @@ import numpy
 from pytorch_trainer import report
 from torch import Tensor, nn
 
-from yukarin_soso.generator import Generator
+from yukarin_sosoa.generator import Generator
 
 _logdb_const = 10.0 / numpy.log(10.0) * numpy.sqrt(2.0)
 

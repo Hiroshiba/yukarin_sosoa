@@ -10,9 +10,9 @@ import yaml
 from optuna.pruners import PercentilePruner
 from optuna.storages import RDBStorage
 
-from yukarin_soso.config import Config
-from yukarin_soso.trainer import create_trainer
-from yukarin_soso.utility.trainer_utility import PruningExtension
+from yukarin_sosoa.config import Config
+from yukarin_sosoa.trainer import create_trainer
+from yukarin_sosoa.utility.trainer_utility import PruningExtension
 
 
 def param_dict_to_name(param_dict: Dict[str, Any]):

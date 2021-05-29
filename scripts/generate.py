@@ -10,14 +10,14 @@ from pytorch_trainer.dataset.convert import concat_examples
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm
 from utility.save_arguments import save_arguments
-from yukarin_soso.config import Config
-from yukarin_soso.dataset import (
+from yukarin_sosoa.config import Config
+from yukarin_sosoa.dataset import (
     FeatureDataset,
     SpeakerFeatureDataset,
     TensorWrapperDataset,
     create_dataset,
 )
-from yukarin_soso.generator import Generator
+from yukarin_sosoa.generator import Generator
 
 
 def _extract_number(f):

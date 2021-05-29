@@ -11,7 +11,7 @@ from acoustic_feature_extractor.data.sampling_data import SamplingData
 from torch.utils.data import ConcatDataset, Dataset
 from torch.utils.data._utils.collate import default_convert
 
-from yukarin_soso.config import DatasetConfig
+from yukarin_sosoa.config import DatasetConfig
 
 mora_phoneme_list = ["a", "i", "u", "e", "o", "A", "I", "U", "E", "O", "N", "cl", "pau"]
 voiced_phoneme_list = (

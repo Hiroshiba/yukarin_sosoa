@@ -7,14 +7,14 @@ import numpy
 import yaml
 from tqdm import tqdm
 from utility.save_arguments import save_arguments
-from yukarin_soso.config import Config
-from yukarin_soso.dataset import (
+from yukarin_sosoa.config import Config
+from yukarin_sosoa.dataset import (
     F0ProcessMode,
     FeatureDataset,
     SpeakerFeatureDataset,
     create_dataset,
 )
-from yukarin_soso.generator import Generator
+from yukarin_sosoa.generator import Generator
 
 
 def _extract_number(f):

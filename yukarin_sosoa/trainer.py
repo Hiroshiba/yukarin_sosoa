@@ -9,19 +9,19 @@ from pytorch_trainer.training import Trainer, extensions
 from pytorch_trainer.training.updaters import StandardUpdater
 from tensorboardX import SummaryWriter
 
-from yukarin_soso.config import Config
-from yukarin_soso.dataset import create_dataset
-from yukarin_soso.evaluator import GenerateEvaluator
-from yukarin_soso.generator import Generator
-from yukarin_soso.model import Model
-from yukarin_soso.network.predictor import create_predictor
-from yukarin_soso.utility.pytorch_utility import (
+from yukarin_sosoa.config import Config
+from yukarin_sosoa.dataset import create_dataset
+from yukarin_sosoa.evaluator import GenerateEvaluator
+from yukarin_sosoa.generator import Generator
+from yukarin_sosoa.model import Model
+from yukarin_sosoa.network.predictor import create_predictor
+from yukarin_sosoa.utility.pytorch_utility import (
     AmpUpdater,
     init_weights,
     make_optimizer,
 )
-from yukarin_soso.utility.trainer_extension import TensorboardReport, WandbReport
-from yukarin_soso.utility.trainer_utility import LowValueTrigger, create_iterator
+from yukarin_sosoa.utility.trainer_extension import TensorboardReport, WandbReport
+from yukarin_sosoa.utility.trainer_utility import LowValueTrigger, create_iterator
 
 
 def create_trainer(

@@ -1,1 +1,1 @@
-# yukarin_soso
+# yukarin_sosoa
