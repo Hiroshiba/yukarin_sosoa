@@ -21,7 +21,11 @@ from yukarin_sosoa.utility.pytorch_utility import (
     make_optimizer,
 )
 from yukarin_sosoa.utility.trainer_extension import TensorboardReport, WandbReport
-from yukarin_sosoa.utility.trainer_utility import LowValueTrigger, create_iterator
+from yukarin_sosoa.utility.trainer_utility import (
+    LowValueTrigger,
+    create_iterator,
+    list_concat,
+)
 
 
 def create_trainer(
@@ -72,6 +76,7 @@ def create_trainer(
             iterator=train_iter,
             optimizer=optimizer,
             model=model,
+            converter=list_concat,
             device=device,
         )
     else:
@@ -79,6 +84,7 @@ def create_trainer(
             iterator=train_iter,
             optimizer=optimizer,
             model=model,
+            converter=list_concat,
             device=device,
         )
 
@@ -94,19 +100,26 @@ def create_trainer(
 
     trainer = Trainer(updater, stop_trigger=trigger_stop, out=output)
 
-    if config.train.step_shift is not None:
+    if (
+        config.train.step_shift is not None
+        and config.train.step_shift["step"] is not None
+    ):
         ext = extensions.StepShift(**config.train.step_shift)
         trainer.extend(ext)
 
-    ext = extensions.Evaluator(test_iter, model, device=device)
+    ext = extensions.Evaluator(test_iter, model, converter=list_concat, device=device)
     trainer.extend(ext, name="test", trigger=trigger_log)
 
     generator = Generator(config=config, predictor=predictor, use_gpu=True)
     generate_evaluator = GenerateEvaluator(generator=generator)
-    ext = extensions.Evaluator(eval_iter, generate_evaluator, device=device)
+    ext = extensions.Evaluator(
+        eval_iter, generate_evaluator, converter=list_concat, device=device
+    )
     trainer.extend(ext, name="eval", trigger=trigger_eval)
     if valid_iter is not None:
-        ext = extensions.Evaluator(valid_iter, generate_evaluator, device=device)
+        ext = extensions.Evaluator(
+            valid_iter, generate_evaluator, converter=list_concat, device=device
+        )
         trainer.extend(ext, name="valid", trigger=trigger_eval)
 
     ext = extensions.snapshot_object(
@@ -116,7 +129,7 @@ def create_trainer(
     )
     trainer.extend(
         ext,
-        trigger=LowValueTrigger("eval/main/mcd", trigger=trigger_eval),
+        trigger=LowValueTrigger("eval/main/diff", trigger=trigger_eval),
     )
 
     trainer.extend(extensions.FailOnNonNumber(), trigger=trigger_log)

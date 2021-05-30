@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, List, Union
 
 import numpy
 import torch
@@ -36,17 +36,17 @@ class Generator(object):
 
     def generate(
         self,
-        f0: Union[numpy.ndarray, torch.Tensor],
-        phoneme: Union[numpy.ndarray, torch.Tensor],
+        f0_list: List[Union[numpy.ndarray, torch.Tensor]],
+        phoneme_list: List[Union[numpy.ndarray, torch.Tensor]],
         speaker_id: Union[numpy.ndarray, torch.Tensor] = None,
     ):
-        f0 = to_tensor(f0).to(self.device)
-        phoneme = to_tensor(phoneme).to(self.device)
+        f0_list = [to_tensor(f0).to(self.device) for f0 in f0_list]
+        phoneme_list = [to_tensor(phoneme).to(self.device) for phoneme in phoneme_list]
         if speaker_id is not None:
             speaker_id = to_tensor(speaker_id).to(self.device)
 
         with torch.no_grad():
-            output = self.predictor.inference(
-                f0=f0, phoneme=phoneme, speaker_id=speaker_id
+            output_list = self.predictor.inference(
+                f0_list=f0_list, phoneme_list=phoneme_list, speaker_id=speaker_id
             )
-        return output.cpu().numpy()
+        return [output.cpu().numpy() for output in output_list]

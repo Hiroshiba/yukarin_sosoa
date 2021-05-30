@@ -38,7 +38,10 @@ def init_weights(model: torch.nn.Module, name: str):
 
         for key, param in layer.named_parameters():
             if "weight" in key:
-                initializer(param)
+                try:
+                    initializer(param)
+                except:
+                    pass
 
     model.apply(_init_weights)
 

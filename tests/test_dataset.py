@@ -93,8 +93,7 @@ def test_f0_mean(
 
 
 def test_extract_input():
-    sampling_length = 10
-    wave_length = 256 * sampling_length
+    wave_length = 2560
     wave_rate = 24000
     second = wave_length / wave_rate
 
@@ -121,10 +120,9 @@ def test_extract_input():
     volume_data = None
     f0_process_mode = F0ProcessMode.normal
     time_mask_max_second = 0
-    time_mask_num = 0
+    time_mask_rate = 0
 
     FeatureDataset.extract_input(
-        sampling_length=sampling_length,
         f0_data=f0_data,
         phoneme_data=phoneme_data,
         spec_data=spec_data,
@@ -133,22 +131,21 @@ def test_extract_input():
         volume_data=volume_data,
         f0_process_mode=f0_process_mode,
         time_mask_max_second=time_mask_max_second,
-        time_mask_num=time_mask_num,
+        time_mask_rate=time_mask_rate,
     )
 
 
 @pytest.mark.parametrize(
-    "sampling_length,f0_process_mode,time_mask_max_second,time_mask_num",
+    "f0_process_mode,time_mask_max_second,time_mask_rate",
     [
-        (256, F0ProcessMode.normal, 0, 0),
-        (256, F0ProcessMode.phoneme_mean, 0, 0),
-        (256, F0ProcessMode.mora_mean, 0, 0),
-        (256, F0ProcessMode.normal, 0.5, 1),
-        (256, F0ProcessMode.voiced_mora_mean, 0, 0),
+        (F0ProcessMode.normal, 0, 0),
+        (F0ProcessMode.phoneme_mean, 0, 0),
+        (F0ProcessMode.mora_mean, 0, 0),
+        (F0ProcessMode.normal, 0.5, 1),
+        (F0ProcessMode.voiced_mora_mean, 0, 0),
     ],
 )
 def test_extract_input_with_dataset(
-    sampling_length: int,
     f0_path: Path,
     phoneme_path: Path,
     phoneme_list_path: Path,
@@ -157,7 +154,7 @@ def test_extract_input_with_dataset(
     volume_path: Path,
     f0_process_mode: F0ProcessMode,
     time_mask_max_second: float,
-    time_mask_num: int,
+    time_mask_rate: float,
 ):
     f0 = SamplingData.load(f0_path)
     phoneme = SamplingData.load(phoneme_path)
@@ -167,7 +164,6 @@ def test_extract_input_with_dataset(
     volume_data = SamplingData.load(volume_path)
 
     FeatureDataset.extract_input(
-        sampling_length=sampling_length,
         f0_data=f0,
         phoneme_data=phoneme,
         spec_data=spectrogram,
@@ -176,5 +172,5 @@ def test_extract_input_with_dataset(
         volume_data=volume_data,
         f0_process_mode=f0_process_mode,
         time_mask_max_second=time_mask_max_second,
-        time_mask_num=time_mask_num,
+        time_mask_rate=time_mask_rate,
     )

@@ -67,7 +67,6 @@ def generate(
     )
 
     sampling_rate = 24000 / 512
-    config.dataset.sampling_length = int(sampling_rate * time_second)
 
     batch_size = config.train.batch_size
 

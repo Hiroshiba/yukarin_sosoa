@@ -1,9 +1,15 @@
-from typing import List, Optional
+from typing import Optional, Sequence
 
+import numpy
 import torch
+from espnet_pytorch_library.nets_utils import make_non_pad_mask
+from espnet_pytorch_library.tacotron2.decoder import Postnet, Prenet
+from espnet_pytorch_library.transformer.embedding import ScaledPositionalEncoding
+from espnet_pytorch_library.transformer.encoder import Encoder
+from espnet_pytorch_library.transformer.mask import subsequent_mask
 from torch import Tensor, nn
+from torch.nn.utils.rnn import pad_sequence
 from yukarin_sosoa.config import NetworkConfig
-from yukarin_sosoa.network.encoder import EncoderType, create_encoder
 
 
 class Predictor(nn.Module):
@@ -13,14 +19,7 @@ class Predictor(nn.Module):
         output_size: int,
         speaker_size: int,
         speaker_embedding_size: int,
-        cnn_type: EncoderType,
-        cnn_hidden_size: int,
-        cnn_kernel_size: int,
-        cnn_layer_num: int,
-        rnn_hidden_size: int,
-        rnn_layer_num: int,
-        ar_hidden_size: int,
-        ar_layer_num: int,
+        hidden_size: int,
     ):
         super().__init__()
         self.output_size = output_size
@@ -36,124 +35,82 @@ class Predictor(nn.Module):
 
         input_size = input_feature_size + speaker_embedding_size
 
-        # cnn
-        self.cnn = create_encoder(
-            type=cnn_type,
-            input_size=input_size,
-            hidden_size=cnn_hidden_size,
-            kernel_size=cnn_kernel_size,
-            layer_num=cnn_layer_num,
-        )
-        input_size = self.cnn.output_hidden_size
-
-        # rnn
-        if rnn_hidden_size == 0 or rnn_layer_num == 0:
-            self.rnn = None
-        else:
-            self.rnn = nn.GRU(
-                input_size=input_size,
-                hidden_size=rnn_hidden_size,
-                num_layers=rnn_layer_num,
-                batch_first=True,
-                bidirectional=True,
-            )
-            input_size = rnn_hidden_size * 2
-
-        # AR rnn
-        if ar_hidden_size == 0 or ar_layer_num == 0:
-            self.ar_rnn = None
-        else:
-            self.ar_rnn = nn.GRU(
-                input_size=input_size + output_size,
-                hidden_size=ar_hidden_size,
-                num_layers=ar_layer_num,
-                batch_first=True,
-                bidirectional=False,
-            )
-            input_size = ar_hidden_size
-
-        # post
-        self.post = nn.Linear(
-            in_features=input_size,
-            out_features=output_size,
+        encoder_input_layer = nn.Sequential(
+            Prenet(idim=input_size, n_layers=2, n_units=hidden_size, dropout_rate=0.5),
+            nn.Linear(hidden_size, hidden_size * 2),
         )
 
-    def forward_encoder(
+        self.encoder = Encoder(
+            idim=None,
+            attention_dim=hidden_size * 2,
+            attention_heads=8,
+            linear_units=hidden_size * 4,
+            num_blocks=6,
+            dropout_rate=0.1,
+            positional_dropout_rate=0.1,
+            attention_dropout_rate=0.1,
+            input_layer=encoder_input_layer,
+            pos_enc_class=ScaledPositionalEncoding,
+            normalize_before=True,
+            concat_after=False,
+        )
+
+        self.post = torch.nn.Linear(hidden_size * 2, output_size)
+
+        self.postnet = Postnet(
+            idim=None,
+            odim=output_size,
+            n_layers=5,
+            n_chans=hidden_size,
+            n_filts=5,
+            use_batch_norm=True,
+            dropout_rate=0.5,
+        )
+
+    def _mask(self, length: Tensor):
+        y_masks = make_non_pad_mask(length).to(length.device)
+        s_masks = subsequent_mask(y_masks.size(-1), device=length.device).unsqueeze(0)
+        return y_masks.unsqueeze(-2) & s_masks
+
+    def forward(
         self,
-        f0: Tensor,
-        phoneme: Tensor,
+        f0_list: Sequence[Tensor],
+        phoneme_list: Sequence[Tensor],
         speaker_id: Optional[Tensor],
     ):
-        feature = torch.cat((f0, phoneme), dim=2)  # (batch_size, length, ?)
+        length_list = [f0.shape[0] for f0 in f0_list]
+
+        length = torch.from_numpy(numpy.array(length_list)).to(f0_list[0].device)
+        f0 = pad_sequence(f0_list, batch_first=True)
+        phoneme = pad_sequence(phoneme_list, batch_first=True)
+
+        h = torch.cat((f0, phoneme), dim=2)  # (batch_size, length, ?)
 
         if self.speaker_embedder is not None and speaker_id is not None:
             speaker_id = self.speaker_embedder(speaker_id)
             speaker_id = speaker_id.unsqueeze(dim=1)  # (batch_size, 1, ?)
             speaker_feature = speaker_id.expand(
-                speaker_id.shape[0], feature.shape[1], speaker_id.shape[2]
+                speaker_id.shape[0], h.shape[1], speaker_id.shape[2]
             )  # (batch_size, length, ?)
-            feature = torch.cat(
-                (feature, speaker_feature), dim=2
-            )  # (batch_size, length, ?)
+            h = torch.cat((h, speaker_feature), dim=2)  # (batch_size, length, ?)
 
-        h = self.cnn(feature)  # (batch_size, length, ?)
-        if self.rnn is not None:
-            h, _ = self.rnn(h)  # (batch_size, length, ?)
-        return h
+        mask = self._mask(length)
+        h, _ = self.encoder(h, mask)
 
-    def forward(
-        self,
-        f0: Tensor,
-        phoneme: Tensor,
-        spec: Tensor,
-        speaker_id: Optional[Tensor],
-    ):
-        h = self.forward_encoder(
-            f0=f0,
-            phoneme=phoneme,
-            speaker_id=speaker_id,
-        )  # (batch_size, length, ?)
-
-        if self.ar_rnn is not None:
-            h = torch.cat((h, spec), dim=2)  # (batch_size, length, ?)
-            h, _ = self.ar_rnn(h)  # (batch_size, length, ?)
-
-        return self.post(h)
+        output1 = self.post(h)
+        output2 = output1 + self.postnet(output1.transpose(1, 2)).transpose(1, 2)
+        return (
+            [output1[i, :l] for i, l in enumerate(length_list)],
+            [output2[i, :l] for i, l in enumerate(length_list)],
+        )
 
     def inference(
         self,
-        f0: Tensor,
-        phoneme: Tensor,
+        f0_list: Sequence[Tensor],
+        phoneme_list: Sequence[Tensor],
         speaker_id: Optional[Tensor],
     ):
-        batch_size = phoneme.shape[0]
-
-        h = self.forward_encoder(
-            f0=f0,
-            phoneme=phoneme,
-            speaker_id=speaker_id,
-        )
-
-        if self.ar_rnn is not None:
-            spec_list: List[Tensor] = []
-
-            spec = torch.zeros(batch_size, 1, self.output_size, dtype=h.dtype).to(
-                h.device
-            )  # (batch, 1, ?)
-            hidden = None
-            for i in range(h.shape[1]):
-                h_one = h[:, i : i + 1, :]  # (batch, 1, ?)
-                h_one = torch.cat((h_one, spec), dim=2)  # (batch, 1, ?)
-                h_one, hidden = self.ar_rnn(h_one, hidden)  # (batch, 1, ?)
-                spec = self.post(h_one)  # (batch, 1, ?)
-
-                spec_list.append(spec)
-
-            h = torch.cat(spec_list, dim=1)  # (batch, length, ?)
-
-        else:
-            h = self.post(h)  # (batch, length, ?)
-
+        _, h = self(f0_list=f0_list, phoneme_list=phoneme_list, speaker_id=speaker_id)
         return h
 
 
@@ -163,12 +120,5 @@ def create_predictor(config: NetworkConfig):
         output_size=config.output_size,
         speaker_size=config.speaker_size,
         speaker_embedding_size=config.speaker_embedding_size,
-        cnn_type=EncoderType(config.cnn_type),
-        cnn_hidden_size=config.cnn_hidden_size,
-        cnn_kernel_size=config.cnn_kernel_size,
-        cnn_layer_num=config.cnn_layer_num,
-        rnn_hidden_size=config.rnn_hidden_size,
-        rnn_layer_num=config.rnn_layer_num,
-        ar_hidden_size=config.ar_hidden_size,
-        ar_layer_num=config.ar_layer_num,
+        hidden_size=config.hidden_size,
     )

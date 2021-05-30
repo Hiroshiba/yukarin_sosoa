@@ -87,20 +87,17 @@ class FeatureDataset(Dataset):
     def __init__(
         self,
         inputs: Sequence[Union[Input, LazyInput]],
-        sampling_length: int,
         f0_process_mode: F0ProcessMode,
         time_mask_max_second: float,
-        time_mask_num: int,
+        time_mask_rate: float,
     ):
         self.inputs = inputs
-        self.sampling_length = sampling_length
         self.f0_process_mode = f0_process_mode
         self.time_mask_max_second = time_mask_max_second
-        self.time_mask_num = time_mask_num
+        self.time_mask_rate = time_mask_rate
 
     @staticmethod
     def extract_input(
-        sampling_length: int,
         f0_data: SamplingData,
         phoneme_data: SamplingData,
         spec_data: SamplingData,
@@ -109,7 +106,7 @@ class FeatureDataset(Dataset):
         volume_data: Optional[SamplingData],
         f0_process_mode: F0ProcessMode,
         time_mask_max_second: float,
-        time_mask_num: int,
+        time_mask_rate: float,
     ):
         rate = spec_data.rate
 
@@ -127,6 +124,13 @@ class FeatureDataset(Dataset):
         length = min(len(spec), len(f0), len(phoneme), len(silence))
         if volume is not None:
             length = min(length, len(volume))
+
+        f0 = f0[:length]
+        phoneme = phoneme[:length]
+        silence = silence[:length]
+        spec = spec[:length]
+        if volume is not None:
+            volume = volume[:length]
 
         if f0_process_mode == F0ProcessMode.normal:
             pass
@@ -151,7 +155,6 @@ class FeatureDataset(Dataset):
                     if p.phoneme not in voiced_phoneme_list:
                         weight[int(p.start * rate) : int(p.end * rate)] = 0
 
-            f0 = f0[:length]
             weight = weight[:length]
 
             f0 = f0_mean(
@@ -161,43 +164,15 @@ class FeatureDataset(Dataset):
                 weight=weight,
             )
 
-        if sampling_length > length:
-            padding_length = sampling_length - length
-            sampling_length = length
-        else:
-            padding_length = 0
-
-        for _ in range(10000):
-            if length > sampling_length + 1:
-                offset = numpy.random.randint(length - sampling_length + 1)
-            else:
-                offset = 0
-            s = numpy.squeeze(silence[offset : offset + sampling_length])
-            if not s.all():
-                break
-        else:
-            raise Exception("cannot pick not silence data")
-
         if silence.ndim == 2:
             silence = numpy.squeeze(silence, axis=1)
 
-        f0 = f0[offset : offset + sampling_length]
-        phoneme = phoneme[offset : offset + sampling_length]
-        spec = spec[offset : offset + sampling_length]
-        silence = silence[offset : offset + sampling_length]
-        padded = numpy.zeros_like(silence)
-
-        if padding_length > 0:
-            pre = numpy.random.randint(padding_length + 1)
-            post = padding_length - pre
-            f0 = numpy.pad(f0, [[pre, post], [0, 0]])
-            phoneme = numpy.pad(phoneme, [[pre, post], [0, 0]])
-            spec = numpy.pad(spec, [[pre, post], [0, 0]])
-            silence = numpy.pad(silence, [pre, post], constant_values=True)
-            padded = numpy.pad(padded, [pre, post], constant_values=True)
-
-        if time_mask_max_second > 0 and time_mask_num > 0:
-            for _ in range(time_mask_num):
+        if time_mask_max_second > 0 and time_mask_rate > 0:
+            expected_num = time_mask_rate * length
+            num = int(expected_num) + int(
+                numpy.random.rand() < (expected_num - int(expected_num))
+            )
+            for _ in range(num):
                 mask_length = numpy.random.randint(int(rate * time_mask_max_second))
                 mask_offset = numpy.random.randint(len(f0) - mask_length + 1)
                 f0[mask_offset : mask_offset + mask_length] = 0
@@ -207,8 +182,6 @@ class FeatureDataset(Dataset):
             f0=f0.astype(numpy.float32),
             phoneme=phoneme.astype(numpy.float32),
             spec=spec.astype(numpy.float32),
-            silence=silence,
-            padded=padded,
         )
 
     def __len__(self):
@@ -220,7 +193,6 @@ class FeatureDataset(Dataset):
             input = input.generate()
 
         return self.extract_input(
-            sampling_length=self.sampling_length,
             f0_data=input.f0,
             phoneme_data=input.phoneme,
             spec_data=input.spec,
@@ -229,7 +201,7 @@ class FeatureDataset(Dataset):
             volume_data=input.volume,
             f0_process_mode=self.f0_process_mode,
             time_mask_max_second=self.time_mask_max_second,
-            time_mask_num=self.time_mask_num,
+            time_mask_rate=self.time_mask_rate,
         )
 
 
@@ -354,10 +326,9 @@ def create_dataset(config: DatasetConfig):
 
         dataset = FeatureDataset(
             inputs=inputs,
-            sampling_length=config.sampling_length,
             f0_process_mode=F0ProcessMode(config.f0_process_mode),
             time_mask_max_second=(config.time_mask_max_second if not for_test else 0),
-            time_mask_num=(config.time_mask_num if not for_test else 0),
+            time_mask_rate=(config.time_mask_rate if not for_test else 0),
         )
 
         if speaker_ids is not None:
@@ -459,10 +430,9 @@ def create_validation_dataset(config: DatasetConfig):
 
     dataset = FeatureDataset(
         inputs=inputs,
-        sampling_length=config.sampling_length,
         f0_process_mode=F0ProcessMode(config.f0_process_mode),
         time_mask_max_second=0,
-        time_mask_num=0,
+        time_mask_rate=0,
     )
 
     if speaker_ids is not None:

@@ -79,7 +79,6 @@ def generate_all(
     ):
         input_data = input.generate()
         data = FeatureDataset.extract_input(
-            sampling_length=len(input_data.spec.array),
             f0_data=input_data.f0,
             phoneme_data=input_data.phoneme,
             spec_data=input_data.spec,

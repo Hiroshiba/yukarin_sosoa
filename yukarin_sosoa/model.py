@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -17,36 +17,27 @@ class Model(nn.Module):
 
     def forward(
         self,
-        f0: Tensor,
-        phoneme: Tensor,
-        spec: Tensor,
-        silence: Tensor,
-        padded: Tensor,
-        speaker_id: Optional[Tensor] = None,
+        f0: List[Tensor],
+        phoneme: List[Tensor],
+        spec: List[Tensor],
+        speaker_id: Optional[List[Tensor]] = None,
     ):
-        batch_size = spec.shape[0]
+        batch_size = len(spec)
 
-        output = self.predictor(
-            f0=f0,
-            phoneme=phoneme,
-            spec=spec.roll(1, dims=1),
-            speaker_id=speaker_id,
+        output1, output2 = self.predictor(
+            f0_list=f0,
+            phoneme_list=phoneme,
+            speaker_id=torch.stack(speaker_id) if speaker_id is not None else None,
         )
 
-        loss = F.l1_loss(input=output, target=spec, reduction="none")
-
-        mask = padded
-        if self.model_config.eliminate_silence:
-            mask = torch.logical_or(mask, silence)
-        loss = loss[~mask]
-
-        loss = loss.mean()
+        loss = F.l1_loss(input=torch.cat(output1), target=torch.cat(spec)) + F.l1_loss(
+            input=torch.cat(output2), target=torch.cat(spec)
+        )
 
         # report
         losses = dict(loss=loss)
         if not self.training:
-            weight = (~mask).to(torch.float32).mean() * batch_size
-            losses = {key: (l, weight) for key, l in losses.items()}
+            losses = {key: (l, batch_size) for key, l in losses.items()}
         report(losses, self)
 
         return loss
