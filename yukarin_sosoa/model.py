@@ -30,12 +30,12 @@ class Model(nn.Module):
             speaker_id=torch.stack(speaker_id) if speaker_id is not None else None,
         )
 
-        loss = F.l1_loss(input=torch.cat(output1), target=torch.cat(spec)) + F.l1_loss(
-            input=torch.cat(output2), target=torch.cat(spec)
-        )
+        loss1 = F.l1_loss(input=torch.cat(output1), target=torch.cat(spec))
+        loss2 = F.l1_loss(input=torch.cat(output2), target=torch.cat(spec))
+        loss = loss1 + loss2
 
         # report
-        losses = dict(loss=loss)
+        losses = dict(loss=loss, loss1=loss1, loss2=loss2)
         if not self.training:
             losses = {key: (l, batch_size) for key, l in losses.items()}
         report(losses, self)

@@ -2,11 +2,9 @@ from typing import Optional, Sequence
 
 import numpy
 import torch
+from espnet_pytorch_library.conformer.encoder import Encoder
 from espnet_pytorch_library.nets_utils import make_non_pad_mask
-from espnet_pytorch_library.tacotron2.decoder import Postnet, Prenet
-from espnet_pytorch_library.transformer.embedding import ScaledPositionalEncoding
-from espnet_pytorch_library.transformer.encoder import Encoder
-from espnet_pytorch_library.transformer.mask import subsequent_mask
+from espnet_pytorch_library.tacotron2.decoder import Postnet
 from torch import Tensor, nn
 from torch.nn.utils.rnn import pad_sequence
 from yukarin_sosoa.config import NetworkConfig
@@ -34,28 +32,30 @@ class Predictor(nn.Module):
         )
 
         input_size = input_feature_size + speaker_embedding_size
-
-        encoder_input_layer = nn.Sequential(
-            Prenet(idim=input_size, n_layers=2, n_units=hidden_size, dropout_rate=0.5),
-            nn.Linear(hidden_size, hidden_size * 2),
-        )
+        self.pre = torch.nn.Linear(input_size, hidden_size)
 
         self.encoder = Encoder(
             idim=None,
-            attention_dim=hidden_size * 2,
-            attention_heads=8,
+            attention_dim=hidden_size,
+            attention_heads=2,
             linear_units=hidden_size * 4,
-            num_blocks=6,
-            dropout_rate=0.1,
-            positional_dropout_rate=0.1,
-            attention_dropout_rate=0.1,
-            input_layer=encoder_input_layer,
-            pos_enc_class=ScaledPositionalEncoding,
+            num_blocks=4,
+            input_layer=None,
+            dropout_rate=0.2,
+            positional_dropout_rate=0.2,
+            attention_dropout_rate=0.2,
             normalize_before=True,
-            concat_after=False,
+            positionwise_layer_type="conv1d",
+            positionwise_conv_kernel_size=3,
+            macaron_style=True,
+            pos_enc_layer_type="rel_pos",
+            selfattention_layer_type="rel_selfattn",
+            activation_type="swish",
+            use_cnn_module=True,
+            cnn_module_kernel=31,
         )
 
-        self.post = torch.nn.Linear(hidden_size * 2, output_size)
+        self.post = torch.nn.Linear(hidden_size, output_size)
 
         self.postnet = Postnet(
             idim=None,
@@ -68,9 +68,8 @@ class Predictor(nn.Module):
         )
 
     def _mask(self, length: Tensor):
-        y_masks = make_non_pad_mask(length).to(length.device)
-        s_masks = subsequent_mask(y_masks.size(-1), device=length.device).unsqueeze(0)
-        return y_masks.unsqueeze(-2) & s_masks
+        x_masks = make_non_pad_mask(length).to(length.device)
+        return x_masks.unsqueeze(-2)
 
     def forward(
         self,
@@ -93,6 +92,8 @@ class Predictor(nn.Module):
                 speaker_id.shape[0], h.shape[1], speaker_id.shape[2]
             )  # (batch_size, length, ?)
             h = torch.cat((h, speaker_feature), dim=2)  # (batch_size, length, ?)
+
+        h = self.pre(h)
 
         mask = self._mask(length)
         h, _ = self.encoder(h, mask)
