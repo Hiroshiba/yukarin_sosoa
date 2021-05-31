@@ -20,7 +20,11 @@ from yukarin_sosoa.utility.pytorch_utility import (
     init_weights,
     make_optimizer,
 )
-from yukarin_sosoa.utility.trainer_extension import TensorboardReport, WandbReport
+from yukarin_sosoa.utility.trainer_extension import (
+    NoamShift,
+    TensorboardReport,
+    WandbReport,
+)
 from yukarin_sosoa.utility.trainer_utility import (
     LowValueTrigger,
     create_iterator,
@@ -105,6 +109,13 @@ def create_trainer(
         and config.train.step_shift["step"] is not None
     ):
         ext = extensions.StepShift(**config.train.step_shift)
+        trainer.extend(ext)
+
+    if (
+        config.train.noam_shift is not None
+        and config.train.noam_shift["step"] is not None
+    ):
+        ext = NoamShift(**config.train.noam_shift)
         trainer.extend(ext)
 
     ext = extensions.Evaluator(test_iter, model, converter=list_concat, device=device)

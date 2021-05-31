@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict
 
+import numpy
 import wandb
 from pytorch_trainer.training import Extension, Trainer
 from tensorboardX import SummaryWriter
@@ -75,3 +76,47 @@ class WandbReport(Extension):
 
     def load_state_dict(self, state_dict):
         self.wandb_id = state_dict["wandb_id"]
+
+
+class NoamShift(Extension):
+    def __init__(self, attr, step, init=None, optimizer=None):
+        self._attr = attr
+        self._step = step
+        self._init = init
+        self._optimizer = optimizer
+        self._t = 0
+        self._last_value = None
+
+    def initialize(self, trainer):
+        optimizer = self._get_optimizer(trainer)
+        # ensure that _init is set
+        if self._init is None:
+            self._init = optimizer.param_groups[0][self._attr]
+        if self._last_value is not None:
+            value = self._last_value
+        else:
+            value = self._init
+        self._update_value(optimizer, value)
+
+    def __call__(self, trainer):
+        self._t += 1
+        optimizer = self._get_optimizer(trainer)
+        value = self._init ** -0.5 * min(self._t ** -0.5, self._step ** -1.5)
+        self._update_value(optimizer, value)
+
+    def state_dict(self):
+        return {"t": self._t, "last_value": self._last_value}
+
+    def load_state_dict(self, state_dict):
+        self._t = state_dict["t"]
+        self._last_value = state_dict["last_value"]
+        if isinstance(self._last_value, numpy.ndarray):
+            self._last_value = self._last_value.item()
+
+    def _get_optimizer(self, trainer):
+        return self._optimizer or trainer.updater.get_optimizer("main")
+
+    def _update_value(self, optimizer, value):
+        for param_group in optimizer.param_groups:
+            param_group[self._attr] = value
+        self._last_value = value
