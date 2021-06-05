@@ -42,6 +42,7 @@ class NetworkConfig:
     speaker_size: int
     speaker_embedding_size: int
     hidden_size: int
+    block_num: int
 
 
 @dataclass
@@ -95,4 +96,5 @@ class Config:
 
 
 def backward_compatible(d: Dict[str, Any]):
-    pass
+    if "block_num" not in d["network"]:
+        d["network"]["block_num"] = 4

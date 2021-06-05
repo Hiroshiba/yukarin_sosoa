@@ -18,6 +18,7 @@ class Predictor(nn.Module):
         speaker_size: int,
         speaker_embedding_size: int,
         hidden_size: int,
+        block_num: int,
     ):
         super().__init__()
         self.output_size = output_size
@@ -39,7 +40,7 @@ class Predictor(nn.Module):
             attention_dim=hidden_size,
             attention_heads=2,
             linear_units=hidden_size * 4,
-            num_blocks=4,
+            num_blocks=block_num,
             input_layer=None,
             dropout_rate=0.2,
             positional_dropout_rate=0.2,
@@ -122,4 +123,5 @@ def create_predictor(config: NetworkConfig):
         speaker_size=config.speaker_size,
         speaker_embedding_size=config.speaker_embedding_size,
         hidden_size=config.hidden_size,
+        block_num=config.block_num,
     )
