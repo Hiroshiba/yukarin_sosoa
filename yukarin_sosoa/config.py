@@ -15,6 +15,7 @@ class DatasetConfig:
     phoneme_list_glob: Optional[str]
     volume_glob: Optional[str]
     f0_process_mode: str
+    phoneme_type: str
     time_mask_max_second: float
     time_mask_rate: float
     speaker_dict_path: Optional[Path]
@@ -98,3 +99,6 @@ class Config:
 def backward_compatible(d: Dict[str, Any]):
     if "block_num" not in d["network"]:
         d["network"]["block_num"] = 4
+
+    if "phoneme_type" not in d["dataset"]:
+        d["dataset"]["phoneme_type"] = "jvs"
