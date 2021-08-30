@@ -45,6 +45,17 @@ def f0_mean(
     return f0
 
 
+def get_notsilence_range(silence: numpy.ndarray, prepost_silence_length: int):
+    length = len(silence)
+    pre_length = numpy.where(numpy.logical_and(silence[:-1], ~silence[1:]))[0][0] + 1
+    pre_index = max(0, pre_length - prepost_silence_length)
+    post_length = length - (
+        numpy.where(numpy.logical_and(~silence[:-1], silence[1:]))[0][-1] + 1
+    )
+    post_index = length - max(0, post_length - prepost_silence_length)
+    return range(pre_index, post_index)
+
+
 @dataclass
 class Input:
     f0: SamplingData
@@ -88,11 +99,13 @@ class FeatureDataset(Dataset):
     def __init__(
         self,
         inputs: Sequence[Union[Input, LazyInput]],
+        prepost_silence_length: int,
         f0_process_mode: F0ProcessMode,
         time_mask_max_second: float,
         time_mask_rate: float,
     ):
         self.inputs = inputs
+        self.prepost_silence_length = prepost_silence_length
         self.f0_process_mode = f0_process_mode
         self.time_mask_max_second = time_mask_max_second
         self.time_mask_rate = time_mask_rate
@@ -105,6 +118,7 @@ class FeatureDataset(Dataset):
         silence_data: SamplingData,
         phoneme_list_data: Optional[List[BasePhoneme]],
         volume_data: Optional[SamplingData],
+        prepost_silence_length: int,
         f0_process_mode: F0ProcessMode,
         time_mask_max_second: float,
         time_mask_rate: float,
@@ -126,12 +140,17 @@ class FeatureDataset(Dataset):
         if volume is not None:
             length = min(length, len(volume))
 
-        f0 = f0[:length]
-        phoneme = phoneme[:length]
-        silence = silence[:length]
-        spec = spec[:length]
+        notsilence_range = get_notsilence_range(
+            silence=silence[:length],
+            prepost_silence_length=prepost_silence_length,
+        )
+
+        f0 = f0[notsilence_range]
+        silence = silence[notsilence_range]
+        phoneme = phoneme[notsilence_range]
+        spec = spec[notsilence_range]
         if volume is not None:
-            volume = volume[:length]
+            volume = volume[notsilence_range]
 
         if f0_process_mode == F0ProcessMode.normal:
             pass
@@ -200,6 +219,7 @@ class FeatureDataset(Dataset):
             silence_data=input.silence,
             phoneme_list_data=input.phoneme_list,
             volume_data=input.volume,
+            prepost_silence_length=self.prepost_silence_length,
             f0_process_mode=self.f0_process_mode,
             time_mask_max_second=self.time_mask_max_second,
             time_mask_rate=self.time_mask_rate,
@@ -328,6 +348,7 @@ def create_dataset(config: DatasetConfig):
 
         dataset = FeatureDataset(
             inputs=inputs,
+            prepost_silence_length=config.prepost_silence_length,
             f0_process_mode=F0ProcessMode(config.f0_process_mode),
             time_mask_max_second=(config.time_mask_max_second if not for_test else 0),
             time_mask_rate=(config.time_mask_rate if not for_test else 0),
@@ -433,6 +454,7 @@ def create_validation_dataset(config: DatasetConfig):
 
     dataset = FeatureDataset(
         inputs=inputs,
+        prepost_silence_length=config.prepost_silence_length,
         f0_process_mode=F0ProcessMode(config.f0_process_mode),
         time_mask_max_second=0,
         time_mask_rate=0,
