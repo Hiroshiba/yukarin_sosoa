@@ -5,6 +5,7 @@ from typing import Optional
 
 import numpy
 import yaml
+from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm
 from utility.save_arguments import save_arguments
 from yukarin_sosoa.config import Config
@@ -40,6 +41,7 @@ def generate_all(
     model_dir: Path,
     model_iteration: Optional[int],
     model_config: Optional[Path],
+    dataset_name: str,
     output_dir: Path,
     transpose: bool,
     use_gpu: bool,
@@ -47,7 +49,7 @@ def generate_all(
     if model_config is None:
         model_config = model_dir / "config.yaml"
 
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     save_arguments(output_dir / "arguments.yaml", generate_all, locals())
 
     config = Config.from_dict(yaml.safe_load(model_config.open()))
@@ -63,8 +65,10 @@ def generate_all(
     )
 
     config.dataset.test_num = 0
-    dataset = create_dataset(config.dataset)["train"]
+    dataset = create_dataset(config.dataset)[dataset_name]
 
+    if isinstance(dataset, ConcatDataset):
+        dataset = dataset.datasets[0]
     if isinstance(dataset.dataset, FeatureDataset):
         inputs = dataset.dataset.inputs
         speaker_ids = [None] * len(inputs)
@@ -84,13 +88,16 @@ def generate_all(
             spec_data=input_data.spec,
             silence_data=input_data.silence,
             phoneme_list_data=input_data.phoneme_list,
+            volume_data=input_data.volume,
+            prepost_silence_length=99999999,
             f0_process_mode=F0ProcessMode(config.dataset.f0_process_mode),
             time_mask_max_second=0,
+            time_mask_rate=0,
         )
 
         spec = generator.generate(
-            f0=data["f0"][numpy.newaxis],
-            phoneme=data["phoneme"][numpy.newaxis],
+            f0_list=[data["f0"]],
+            phoneme_list=[data["phoneme"]],
             speaker_id=(
                 numpy.array(speaker_id)[numpy.newaxis]
                 if speaker_id is not None
@@ -110,6 +117,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_dir", required=True, type=Path)
     parser.add_argument("--model_iteration", type=int)
     parser.add_argument("--model_config", type=Path)
+    parser.add_argument("--dataset_name", default="train")
     parser.add_argument("--output_dir", required=True, type=Path)
     parser.add_argument("--transpose", action="store_true")
     parser.add_argument("--use_gpu", action="store_true")
