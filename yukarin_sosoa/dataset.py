@@ -47,11 +47,9 @@ def f0_mean(
 
 def get_notsilence_range(silence: numpy.ndarray, prepost_silence_length: int):
     length = len(silence)
-    pre_length = numpy.where(numpy.logical_and(silence[:-1], ~silence[1:]))[0][0] + 1
+    pre_length = numpy.argwhere(~silence)[0][0]
     pre_index = max(0, pre_length - prepost_silence_length)
-    post_length = length - (
-        numpy.where(numpy.logical_and(~silence[:-1], silence[1:]))[0][-1] + 1
-    )
+    post_length = length - numpy.argwhere(~silence)[-1][0] - 1
     post_index = length - max(0, post_length - prepost_silence_length)
     return range(pre_index, post_index)
 

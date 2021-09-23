@@ -1,11 +1,16 @@
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy
 import pytest
 from acoustic_feature_extractor.data.phoneme import JvsPhoneme
 from acoustic_feature_extractor.data.sampling_data import SamplingData
-from yukarin_sosoa.dataset import F0ProcessMode, FeatureDataset, f0_mean
+from yukarin_sosoa.dataset import (
+    F0ProcessMode,
+    FeatureDataset,
+    f0_mean,
+    get_notsilence_range,
+)
 
 from tests.utility import get_data_directory
 
@@ -92,6 +97,31 @@ def test_f0_mean(
     numpy.testing.assert_allclose(output, expected)
 
 
+@pytest.mark.parametrize(
+    "silence,prepost_silence_length,expected",
+    [
+        (
+            numpy.array([True, True, False, False, False, True, True, True, True]),
+            0,
+            range(2, 5),
+        ),
+        (
+            numpy.array([True, True, False, False, False, True, True, True, True]),
+            2,
+            range(0, 7),
+        ),
+        (numpy.zeros(10, dtype=bool), 0, range(0, 10)),
+        (numpy.zeros(10, dtype=bool), 2, range(0, 10)),
+    ],
+)
+def test_get_notsilence_range(
+    silence: numpy.ndarray, prepost_silence_length: int, expected: range
+):
+    assert expected == get_notsilence_range(
+        silence=silence, prepost_silence_length=prepost_silence_length
+    )
+
+
 def test_extract_input():
     wave_length = 2560
     wave_rate = 24000
@@ -113,11 +143,13 @@ def test_extract_input():
     spec = numpy.arange(int(second * spec_rate)).reshape(-1, 1).astype(numpy.float32)
     spec_data = SamplingData(array=spec, rate=spec_rate)
 
-    silence = numpy.zeros(int(second * silence_rate)).astype(bool)
+    silence = numpy.ones(int(second * silence_rate)).astype(bool)
+    silence[len(silence) // 4 : len(silence) // 4 * 3] = False
     silence_data = SamplingData(array=silence, rate=silence_rate)
 
     phoneme_list_data = None
     volume_data = None
+    prepost_silence_length = 0
     f0_process_mode = F0ProcessMode.normal
     time_mask_max_second = 0
     time_mask_rate = 0
@@ -129,6 +161,7 @@ def test_extract_input():
         silence_data=silence_data,
         phoneme_list_data=phoneme_list_data,
         volume_data=volume_data,
+        prepost_silence_length=prepost_silence_length,
         f0_process_mode=f0_process_mode,
         time_mask_max_second=time_mask_max_second,
         time_mask_rate=time_mask_rate,
@@ -136,13 +169,13 @@ def test_extract_input():
 
 
 @pytest.mark.parametrize(
-    "f0_process_mode,time_mask_max_second,time_mask_rate",
+    "prepost_silence_length,f0_process_mode,time_mask_max_second,time_mask_rate",
     [
-        (F0ProcessMode.normal, 0, 0),
-        (F0ProcessMode.phoneme_mean, 0, 0),
-        (F0ProcessMode.mora_mean, 0, 0),
-        (F0ProcessMode.normal, 0.5, 1),
-        (F0ProcessMode.voiced_mora_mean, 0, 0),
+        (0, F0ProcessMode.normal, 0, 0),
+        (0, F0ProcessMode.phoneme_mean, 0, 0),
+        (0, F0ProcessMode.mora_mean, 0, 0),
+        (0, F0ProcessMode.normal, 0.5, 1),
+        (0, F0ProcessMode.voiced_mora_mean, 0, 0),
     ],
 )
 def test_extract_input_with_dataset(
@@ -152,6 +185,7 @@ def test_extract_input_with_dataset(
     silence_path: Path,
     spectrogram_path: Path,
     volume_path: Path,
+    prepost_silence_length: int,
     f0_process_mode: F0ProcessMode,
     time_mask_max_second: float,
     time_mask_rate: float,
@@ -170,6 +204,7 @@ def test_extract_input_with_dataset(
         silence_data=silence,
         phoneme_list_data=phoneme_list,
         volume_data=volume_data,
+        prepost_silence_length=prepost_silence_length,
         f0_process_mode=f0_process_mode,
         time_mask_max_second=time_mask_max_second,
         time_mask_rate=time_mask_rate,
