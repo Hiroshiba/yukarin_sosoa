@@ -110,6 +110,27 @@ def test_f0_mean(
             2,
             range(0, 7),
         ),
+        (
+            numpy.array(
+                [
+                    False,
+                    False,
+                    True,
+                    True,
+                    False,
+                    False,
+                    False,
+                    True,
+                    True,
+                    True,
+                    True,
+                    False,
+                    False,
+                ]
+            ),
+            0,
+            range(4, 7),
+        ),
         (numpy.zeros(10, dtype=bool), 0, range(0, 10)),
         (numpy.zeros(10, dtype=bool), 2, range(0, 10)),
     ],

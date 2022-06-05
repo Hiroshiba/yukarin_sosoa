@@ -46,10 +46,19 @@ def f0_mean(
 
 
 def get_notsilence_range(silence: numpy.ndarray, prepost_silence_length: int):
+    """
+    最初と最後の無音を除去したrangeを返す。
+    一番最初や最後が無音でない場合はノイズとみなしてその区間も除去する。
+    最小でもprepost_silence_lengthだけは確保する。
+    """
     length = len(silence)
-    pre_length = numpy.argwhere(~silence)[0][0]
+
+    ps = numpy.argwhere(numpy.logical_and(silence[:-1], ~silence[1:]))
+    pre_length = ps[0][0] + 1 if len(ps) > 0 else 0
     pre_index = max(0, pre_length - prepost_silence_length)
-    post_length = length - numpy.argwhere(~silence)[-1][0] - 1
+
+    ps = numpy.argwhere(numpy.logical_and(~silence[:-1], silence[1:]))
+    post_length = length - (ps[-1][0] + 1) if len(ps) > 0 else 0
     post_index = length - max(0, post_length - prepost_silence_length)
     return range(pre_index, post_index)
 

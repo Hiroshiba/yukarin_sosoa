@@ -72,7 +72,7 @@ def check_dataset(config_yaml_path: Path, trials: int):
             batchsize=batchsize,
         )
 
-        if  datasets["valid"] is not None:
+        if datasets["valid"] is not None:
             _check(
                 datasets["valid"],
                 desc="valid",
