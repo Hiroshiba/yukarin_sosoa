@@ -65,6 +65,7 @@ def generate_all(
     )
 
     config.dataset.test_num = 0
+    config.dataset.valid_num = 9999999
     dataset = create_dataset(config.dataset)[dataset_name]
 
     if isinstance(dataset, ConcatDataset):
