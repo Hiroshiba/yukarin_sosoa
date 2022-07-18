@@ -90,7 +90,7 @@ class LazyInput:
             spec=SamplingData.load(self.spec_path),
             silence=SamplingData.load(self.silence_path),
             phoneme_list=(
-                self.phoneme_class.load_julius_list(self.phoneme_list_path)
+                self.phoneme_class.load_julius_list(self.phoneme_list_path, verify=False)
                 if self.phoneme_list_path is not None
                 else None
             ),
