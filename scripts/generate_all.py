@@ -89,6 +89,7 @@ def generate_all(
             spec_data=input_data.spec,
             silence_data=input_data.silence,
             phoneme_list_data=input_data.phoneme_list,
+            max_sampling_length=99999999,
             volume_data=input_data.volume,
             prepost_silence_length=99999999,
             f0_process_mode=F0ProcessMode(config.dataset.f0_process_mode),
