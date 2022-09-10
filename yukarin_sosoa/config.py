@@ -15,6 +15,7 @@ class DatasetConfig:
     phoneme_list_glob: Optional[str]
     volume_glob: Optional[str]
     prepost_silence_length: int
+    max_sampling_length: int
     f0_process_mode: str
     phoneme_type: str
     time_mask_max_second: float
@@ -106,3 +107,6 @@ def backward_compatible(d: Dict[str, Any]):
 
     if "prepost_silence_length" not in d["dataset"]:
         d["dataset"]["prepost_silence_length"] = 99999999
+
+    if "max_sampling_length" not in d["dataset"]:
+        d["dataset"]["max_sampling_length"] = 99999999
