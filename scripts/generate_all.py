@@ -97,15 +97,28 @@ def generate_all(
             time_mask_rate=0,
         )
 
-        spec = generator.generate(
-            f0_list=[data["f0"]],
-            phoneme_list=[data["phoneme"]],
+        f0 = data["f0"]
+        phoneme = data["phoneme"]
+
+        # 長い場合は雑に区切る
+        if len(f0) > config.dataset.max_sampling_length:
+            num = len(f0) // config.dataset.max_sampling_length
+            f0_list = numpy.array_split(f0, num)
+            phoneme_list = numpy.array_split(phoneme, num)
+        else:
+            f0_list = [f0]
+            phoneme_list = [phoneme]
+
+        spec_list = generator.generate(
+            f0_list=f0_list,
+            phoneme_list=phoneme_list,
             speaker_id=(
-                numpy.array(speaker_id)[numpy.newaxis]
+                numpy.array([speaker_id] * len(f0_list))
                 if speaker_id is not None
                 else None
             ),
-        )[0]
+        )
+        spec = numpy.concatenate(spec_list, axis=0)
 
         if transpose:
             spec = spec.T
