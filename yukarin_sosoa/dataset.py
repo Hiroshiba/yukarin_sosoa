@@ -3,15 +3,15 @@ from dataclasses import dataclass
 from enum import Enum
 from glob import glob
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Type, Union
+from typing import Dict, List, Optional, Sequence, Union
 
 import numpy
-from acoustic_feature_extractor.data.phoneme import BasePhoneme, phoneme_type_to_class
-from acoustic_feature_extractor.data.sampling_data import SamplingData
 from torch.utils.data import ConcatDataset, Dataset
 from torch.utils.data._utils.collate import default_convert
 
 from yukarin_sosoa.config import DatasetConfig
+from yukarin_sosoa.data.phoneme import OjtPhoneme
+from yukarin_sosoa.data.sampling_data import SamplingData
 
 mora_phoneme_list = ["a", "i", "u", "e", "o", "A", "I", "U", "E", "O", "N", "cl", "pau"]
 voiced_phoneme_list = (
@@ -69,7 +69,7 @@ class Input:
     phoneme: SamplingData
     spec: SamplingData
     silence: SamplingData
-    phoneme_list: Optional[List[BasePhoneme]]
+    phoneme_list: Optional[List[OjtPhoneme]]
     volume: Optional[SamplingData]
 
 
@@ -81,7 +81,6 @@ class LazyInput:
     silence_path: Path
     phoneme_list_path: Optional[Path]
     volume_path: Optional[Path]
-    phoneme_class: Type[BasePhoneme]
 
     def generate(self):
         return Input(
@@ -127,7 +126,7 @@ class FeatureDataset(Dataset):
         phoneme_data: SamplingData,
         spec_data: SamplingData,
         silence_data: SamplingData,
-        phoneme_list_data: Optional[List[BasePhoneme]],
+        phoneme_list_data: Optional[List[OjtPhoneme]],
         volume_data: Optional[SamplingData],
         prepost_silence_length: int,
         max_sampling_length: int,
@@ -367,7 +366,6 @@ def create_dataset(config: DatasetConfig):
                     phoneme_list_paths[fn] if phoneme_list_paths is not None else None
                 ),
                 volume_path=volume_paths[fn] if volume_paths is not None else None,
-                phoneme_class=phoneme_type_to_class[config.phoneme_type],
             )
             for fn in fns
         ]
@@ -474,7 +472,6 @@ def create_validation_dataset(config: DatasetConfig):
                 phoneme_list_paths[fn] if phoneme_list_paths is not None else None
             ),
             volume_path=volume_paths[fn] if volume_paths is not None else None,
-            phoneme_class=phoneme_type_to_class[config.phoneme_type],
         )
         for fn in valids
     ]
