@@ -1,13 +1,60 @@
-from typing import Optional, Sequence
-
-import numpy
 import torch
-from espnet_pytorch_library.conformer.encoder import Encoder
-from espnet_pytorch_library.nets_utils import make_non_pad_mask
-from espnet_pytorch_library.tacotron2.decoder import Postnet
 from torch import Tensor, nn
 from torch.nn.utils.rnn import pad_sequence
-from yukarin_sosoa.config import NetworkConfig
+
+from ..config import NetworkConfig
+from ..network.conformer.encoder import Encoder
+from ..network.transformer.utility import make_non_pad_mask
+
+
+class Postnet(nn.Module):
+    def __init__(
+        self,
+        odim,
+        n_layers=5,
+        n_chans=512,
+        n_filts=5,
+        dropout_rate=0.5,
+    ):
+        super(Postnet, self).__init__()
+        postnet = []
+        for layer in range(n_layers - 1):
+            ichans = odim if layer == 0 else n_chans
+            ochans = odim if layer == n_layers - 1 else n_chans
+            postnet += [
+                nn.Sequential(
+                    nn.Conv1d(
+                        ichans,
+                        ochans,
+                        n_filts,
+                        stride=1,
+                        padding=(n_filts - 1) // 2,
+                        bias=False,
+                    ),
+                    nn.BatchNorm1d(ochans),
+                    nn.Tanh(),
+                    nn.Dropout(dropout_rate),
+                )
+            ]
+        ichans = n_chans if n_layers != 1 else odim
+        postnet += [
+            nn.Sequential(
+                nn.Conv1d(
+                    ichans,
+                    odim,
+                    n_filts,
+                    stride=1,
+                    padding=(n_filts - 1) // 2,
+                    bias=False,
+                ),
+                nn.BatchNorm1d(odim),
+                nn.Dropout(dropout_rate),
+            )
+        ]
+        self.postnet = nn.Sequential(*postnet)
+
+    def forward(self, x: Tensor):
+        return self.postnet(x)
 
 
 class Predictor(nn.Module):
@@ -18,7 +65,7 @@ class Predictor(nn.Module):
         speaker_size: int,
         speaker_embedding_size: int,
         hidden_size: int,
-        block_num: int,
+        encoder: Encoder,
     ):
         super().__init__()
         self.output_size = output_size
@@ -33,95 +80,79 @@ class Predictor(nn.Module):
         )
 
         input_size = input_feature_size + speaker_embedding_size
-        self.pre = torch.nn.Linear(input_size, hidden_size)
+        self.pre = nn.Linear(input_size, hidden_size)
 
-        self.encoder = Encoder(
-            idim=None,
-            attention_dim=hidden_size,
-            attention_heads=2,
-            linear_units=hidden_size * 4,
-            num_blocks=block_num,
-            input_layer=None,
-            dropout_rate=0.2,
-            positional_dropout_rate=0.2,
-            attention_dropout_rate=0.2,
-            normalize_before=True,
-            positionwise_layer_type="conv1d",
-            positionwise_conv_kernel_size=3,
-            macaron_style=True,
-            pos_enc_layer_type="rel_pos",
-            selfattention_layer_type="rel_selfattn",
-            activation_type="swish",
-            use_cnn_module=True,
-            cnn_module_kernel=31,
-        )
+        self.encoder = encoder
 
-        self.post = torch.nn.Linear(hidden_size, output_size)
+        self.post = nn.Linear(hidden_size, output_size)
 
         self.postnet = Postnet(
-            idim=None,
             odim=output_size,
             n_layers=5,
             n_chans=hidden_size,
             n_filts=5,
-            use_batch_norm=True,
             dropout_rate=0.5,
         )
 
-    def _mask(self, length: Tensor):
-        x_masks = make_non_pad_mask(length).to(length.device)
-        return x_masks.unsqueeze(-2)
-
     def forward(
         self,
-        f0_list: Sequence[Tensor],
-        phoneme_list: Sequence[Tensor],
-        speaker_id: Optional[Tensor],
+        f0_list: list[Tensor],  # [(L, )]
+        phoneme_list: list[Tensor],  # [(L, )]
+        speaker_id: Tensor | None,  # (B, )
     ):
-        length_list = [f0.shape[0] for f0 in f0_list]
+        """
+        B: batch size
+        L: length
+        """
+        device = f0_list[0].device
 
-        length = torch.from_numpy(numpy.array(length_list)).to(f0_list[0].device)
-        f0 = pad_sequence(f0_list, batch_first=True)
-        phoneme = pad_sequence(phoneme_list, batch_first=True)
+        length = torch.tensor([f0.shape[0] for f0 in f0_list], device=device)
 
-        h = torch.cat((f0, phoneme), dim=2)  # (batch_size, length, ?)
+        f0 = pad_sequence(f0_list, batch_first=True)  # (B, L, ?)
+        phoneme = pad_sequence(phoneme_list, batch_first=True)  # (B, L, ?)
+        h = torch.cat((f0, phoneme), dim=2)  # (B, L, ?)
 
         if self.speaker_embedder is not None and speaker_id is not None:
             speaker_id = self.speaker_embedder(speaker_id)
-            speaker_id = speaker_id.unsqueeze(dim=1)  # (batch_size, 1, ?)
+            speaker_id = speaker_id.unsqueeze(dim=1)  # (B, 1, ?)
             speaker_feature = speaker_id.expand(
                 speaker_id.shape[0], h.shape[1], speaker_id.shape[2]
-            )  # (batch_size, length, ?)
-            h = torch.cat((h, speaker_feature), dim=2)  # (batch_size, length, ?)
+            )  # (B, L, ?)
+            h = torch.cat((h, speaker_feature), dim=2)  # (B, L, ?)
 
         h = self.pre(h)
 
-        mask = self._mask(length)
-        h, _ = self.encoder(h, mask)
+        mask = make_non_pad_mask(length).unsqueeze(-2).to(device)  # (B, L, 1)
+        h, _ = self.encoder(x=h, cond=None, mask=mask)
 
         output1 = self.post(h)
         output2 = output1 + self.postnet(output1.transpose(1, 2)).transpose(1, 2)
         return (
-            [output1[i, :l] for i, l in enumerate(length_list)],
-            [output2[i, :l] for i, l in enumerate(length_list)],
+            [output1[i, :l] for i, l in enumerate(length)],
+            [output2[i, :l] for i, l in enumerate(length)],
         )
-
-    def inference(
-        self,
-        f0_list: Sequence[Tensor],
-        phoneme_list: Sequence[Tensor],
-        speaker_id: Optional[Tensor],
-    ):
-        _, h = self(f0_list=f0_list, phoneme_list=phoneme_list, speaker_id=speaker_id)
-        return h
 
 
 def create_predictor(config: NetworkConfig):
+    encoder = Encoder(
+        hidden_size=config.hidden_size,
+        condition_size=0,
+        block_num=config.block_num,
+        dropout_rate=0.2,
+        positional_dropout_rate=0.2,
+        attention_head_size=2,
+        attention_dropout_rate=0.2,
+        use_macaron_style=True,
+        use_conv_glu_module=True,
+        conv_glu_module_kernel_size=31,
+        feed_forward_hidden_size=config.hidden_size * 4,
+        feed_forward_kernel_size=3,
+    )
     return Predictor(
         input_feature_size=config.input_feature_size,
         output_size=config.output_size,
         speaker_size=config.speaker_size,
         speaker_embedding_size=config.speaker_embedding_size,
         hidden_size=config.hidden_size,
-        block_num=config.block_num,
+        encoder=encoder,
     )

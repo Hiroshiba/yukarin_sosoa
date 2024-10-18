@@ -4,18 +4,21 @@ from pathlib import Path
 from typing import Optional
 
 import numpy
+import torch
 import yaml
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm
+
 from utility.save_arguments import save_arguments
 from yukarin_sosoa.config import Config
 from yukarin_sosoa.dataset import (
     F0ProcessMode,
-    FeatureDataset,
+    FeatureTargetDataset,
     SpeakerFeatureDataset,
     create_dataset,
+    preprocess,
 )
-from yukarin_sosoa.generator import Generator
+from yukarin_sosoa.generator import Generator, GeneratorOutput
 
 
 def _extract_number(f):
@@ -70,11 +73,11 @@ def generate_all(
 
     if isinstance(dataset, ConcatDataset):
         dataset = dataset.datasets[0]
-    if isinstance(dataset.dataset, FeatureDataset):
-        inputs = dataset.dataset.inputs
+    if isinstance(dataset.dataset, FeatureTargetDataset):
+        inputs = dataset.dataset.datas
         speaker_ids = [None] * len(inputs)
     elif isinstance(dataset.dataset, SpeakerFeatureDataset):
-        inputs = dataset.dataset.dataset.inputs
+        inputs = dataset.dataset.dataset.datas
         speaker_ids = dataset.dataset.speaker_ids
     else:
         raise ValueError(dataset)
@@ -83,14 +86,9 @@ def generate_all(
         zip(inputs, speaker_ids), total=len(inputs), desc="generate_all"
     ):
         input_data = input.generate()
-        data = FeatureDataset.extract_input(
-            f0_data=input_data.f0,
-            phoneme_data=input_data.phoneme,
-            spec_data=input_data.spec,
-            silence_data=input_data.silence,
-            phoneme_list_data=input_data.phoneme_list,
+        data = preprocess(
+            d=input_data,
             max_sampling_length=99999999,
-            volume_data=input_data.volume,
             prepost_silence_length=99999999,
             f0_process_mode=F0ProcessMode(config.dataset.f0_process_mode),
             time_mask_max_second=0,
@@ -109,7 +107,7 @@ def generate_all(
             f0_list = [f0]
             phoneme_list = [phoneme]
 
-        spec_list = generator.generate(
+        output_list: list[GeneratorOutput] = generator(
             f0_list=f0_list,
             phoneme_list=phoneme_list,
             speaker_id=(
@@ -118,12 +116,17 @@ def generate_all(
                 else None
             ),
         )
-        spec = numpy.concatenate(spec_list, axis=0)
+        spec = (
+            torch.cat([output["spec"] for output in output_list], dim=0)
+            .detach()
+            .cpu()
+            .numpy()
+        )
 
         if transpose:
             spec = spec.T
 
-        name = input.f0_path.stem
+        name = Path(input.f0_path).stem
         numpy.save(output_dir.joinpath(name + ".npy"), spec)
 
 

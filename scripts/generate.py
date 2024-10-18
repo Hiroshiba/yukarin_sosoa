@@ -9,10 +9,11 @@ from more_itertools import chunked
 from pytorch_trainer.dataset.convert import concat_examples
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm
+
 from utility.save_arguments import save_arguments
 from yukarin_sosoa.config import Config
 from yukarin_sosoa.dataset import (
-    FeatureDataset,
+    FeatureTargetDataset,
     SpeakerFeatureDataset,
     TensorWrapperDataset,
     create_dataset,
@@ -74,10 +75,10 @@ def generate(
     if isinstance(dataset, ConcatDataset):
         dataset = dataset.datasets[0]
 
-    if isinstance(dataset.dataset, FeatureDataset):
-        f0_paths = [inp.f0_path for inp in dataset.dataset.inputs[:num_test]]
+    if isinstance(dataset.dataset, FeatureTargetDataset):
+        f0_paths = [inp.f0_path for inp in dataset.dataset.datas[:num_test]]
     elif isinstance(dataset.dataset, SpeakerFeatureDataset):
-        f0_paths = [inp.f0_path for inp in dataset.dataset.dataset.inputs[:num_test]]
+        f0_paths = [inp.f0_path for inp in dataset.dataset.dataset.datas[:num_test]]
     else:
         raise ValueError(dataset)
 
@@ -86,7 +87,7 @@ def generate(
         chunked(f0_paths, batch_size),
     ):
         data = concat_examples(data)
-        specs = generator.generate(
+        specs = generator.forward(
             f0=data["f0"],
             phoneme=data["phoneme"],
             speaker_id=data["speaker_id"] if "speaker_id" in data else None,

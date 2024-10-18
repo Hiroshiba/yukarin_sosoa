@@ -1,42 +1,41 @@
-from typing import List, Optional
+from typing import TypedDict
 
-import numpy
 import torch
-from pytorch_trainer import report
 from torch import Tensor, nn
 
-from yukarin_sosoa.generator import Generator
+from yukarin_sosoa.dataset import DatasetOutput
+
+from .generator import Generator, GeneratorOutput
 
 
-class GenerateEvaluator(nn.Module):
-    def __init__(
-        self,
-        generator: Generator,
-    ):
+class EvaluatorOutput(TypedDict):
+    value: Tensor
+    data_num: int
+
+
+class Evaluator(nn.Module):
+    def __init__(self, generator: Generator):
         super().__init__()
         self.generator = generator
 
-    def __call__(
-        self,
-        f0: List[Tensor],
-        phoneme: List[Tensor],
-        spec: List[Tensor],
-        speaker_id: Optional[List[Tensor]] = None,
-    ):
-        batch_size = len(spec)
-
-        output = self.generator.generate(
-            f0_list=f0,
-            phoneme_list=phoneme,
-            speaker_id=torch.stack(speaker_id) if speaker_id is not None else None,
+    def forward(self, data: DatasetOutput) -> EvaluatorOutput:
+        output_list: list[GeneratorOutput] = self.generator(
+            f0_list=data["f0"],
+            phoneme_list=data["phoneme"],
+            speaker_id=(
+                torch.stack(data["speaker_id"])
+                if data["speaker_id"] is not None
+                else None
+            ),
         )
 
-        diff = numpy.abs(
-            numpy.concatenate(output)
-            - numpy.concatenate([s.cpu().numpy() for s in spec])
-        ).mean()
+        output = torch.cat([output["spec"] for output in output_list])
 
-        scores = {"diff": (diff, batch_size)}
+        target_spec = torch.cat(data["spec"])
 
-        report(scores, self)
-        return scores
+        value = torch.abs(output - target_spec).mean()
+
+        return EvaluatorOutput(
+            value=value,
+            data_num=len(data),
+        )

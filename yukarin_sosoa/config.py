@@ -1,9 +1,10 @@
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from yukarin_sosoa.utility import dataclass_utility
-from yukarin_sosoa.utility.git_utility import get_branch_name, get_commit_id
+from .utility import dataclass_utility
+from .utility.git_utility import get_branch_name, get_commit_id
 
 
 @dataclass
@@ -56,18 +57,19 @@ class ModelConfig:
 @dataclass
 class TrainConfig:
     batch_size: int
-    log_iteration: int
-    eval_iteration: int
-    snapshot_iteration: int
-    stop_iteration: int
+    eval_batch_size: int
+    log_epoch: int
+    eval_epoch: int
+    snapshot_epoch: int
+    stop_epoch: int
+    model_save_num: int
     optimizer: Dict[str, Any]
+    scheduler: Dict[str, Any]
     weight_initializer: Optional[str] = None
-    step_shift: Optional[Dict[str, Any]] = None
-    noam_shift: Optional[Dict[str, Any]] = None
-    num_processes: Optional[int] = None
-    use_amp: bool = False
-    use_multithread: bool = False
-    optuna: Dict[str, Any] = field(default_factory=dict)
+    pretrained_predictor_path: Optional[Path] = None
+    num_processes: int = 4
+    use_gpu: bool = True
+    use_amp: bool = True
 
 
 @dataclass
@@ -88,7 +90,7 @@ class Config:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Config":
         backward_compatible(d)
-        return dataclass_utility.convert_from_dict(cls, d)
+        return dataclass_utility.convert_from_dict(cls, copy.deepcopy(d))
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclass_utility.convert_to_dict(self)
@@ -99,12 +101,6 @@ class Config:
 
 
 def backward_compatible(d: Dict[str, Any]):
-    if "block_num" not in d["network"]:
-        d["network"]["block_num"] = 4
-
-    if "phoneme_type" not in d["dataset"]:
-        d["dataset"]["phoneme_type"] = "jvs"
-
     if "prepost_silence_length" not in d["dataset"]:
         d["dataset"]["prepost_silence_length"] = 99999999
 

@@ -1,15 +1,17 @@
 import argparse
 import multiprocessing
-import warnings
+import traceback
 from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import yaml
-from pytorch_trainer.iterators import MultiprocessIterator
+from torch.utils.data import DataLoader
 from tqdm import tqdm
+
 from yukarin_sosoa.config import Config
 from yukarin_sosoa.dataset import create_dataset
+from yukarin_sosoa.utility.pytorch_utility import collate_list
 
 
 def _wrapper(index, dataset):
@@ -20,27 +22,37 @@ def _wrapper(index, dataset):
         return index, e
 
 
-def _check(dataset, desc: str, num_processes: Optional[int], batchsize: int):
+def _check(
+    dataset,
+    desc: str,
+    num_processes: Optional[int],
+    batch_size: int,
+    pin_memory: bool,
+    drop_last: bool,
+):
     wrapper = partial(_wrapper, dataset=dataset)
 
     with multiprocessing.Pool(processes=num_processes) as pool:
-        it = pool.imap_unordered(wrapper, range(len(dataset)), chunksize=2 ** 10)
+        it = pool.imap_unordered(wrapper, range(len(dataset)), chunksize=2**8)
         for i, error in tqdm(it, desc=desc, total=len(dataset)):
             if error is not None:
                 print(f"error at {i}")
+                traceback.print_exception(type(error), error, error.__traceback__)
                 breakpoint()
+                raise error
 
-    if num_processes != 0:
-        it = MultiprocessIterator(
-            dataset,
-            batchsize,
-            repeat=False,
-            shuffle=False,
-            n_processes=num_processes,
-            dataset_timeout=10,
-        )
-        for i, _ in tqdm(enumerate(it), desc=desc, total=len(dataset) // batchsize):
-            pass
+    it = DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_processes,
+        collate_fn=collate_list,
+        pin_memory=pin_memory,
+        drop_last=drop_last,
+        timeout=0 if num_processes == 0 else 15,
+    )
+    for i, _ in tqdm(enumerate(it), desc=desc, total=len(dataset) // batch_size):
+        pass
 
 
 def check_dataset(config_yaml_path: Path, trials: int):
@@ -49,36 +61,26 @@ def check_dataset(config_yaml_path: Path, trials: int):
 
     config = Config.from_dict(config_dict)
 
-    warnings.simplefilter("error", MultiprocessIterator.TimeoutWarning)
-
     num_processes = config.train.num_processes
-    batchsize = config.train.batch_size
+    batch_size = config.train.batch_size
+    pin_memory = config.train.use_gpu
 
     # dataset
     datasets = create_dataset(config.dataset)
 
+    wrapper = partial(
+        _check,
+        num_processes=num_processes,
+        batch_size=batch_size,
+        pin_memory=pin_memory,
+    )
+
     for i in range(trials):
         print(f"try {i}")
-        _check(
-            datasets["train"],
-            desc="train",
-            num_processes=num_processes,
-            batchsize=batchsize,
-        )
-        _check(
-            datasets["test"],
-            desc="test",
-            num_processes=num_processes,
-            batchsize=batchsize,
-        )
-
-        if datasets["valid"] is not None:
-            _check(
-                datasets["valid"],
-                desc="valid",
-                num_processes=num_processes,
-                batchsize=batchsize,
-            )
+        wrapper(datasets["train"], desc="train", drop_last=True)
+        wrapper(datasets["test"], desc="test", drop_last=False)
+        wrapper(datasets["eval"], desc="eval", drop_last=False)
+        wrapper(datasets["valid"], desc="valid", drop_last=False)
 
 
 if __name__ == "__main__":

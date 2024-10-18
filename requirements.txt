@@ -1,9 +1,9 @@
-more_itertools
 numpy
 scipy
 librosa
-pyyaml
+tqdm
 torch
 torch_optimizer
-tqdm
-git+https://github.com/Hiroshiba/espnet_pytorch_library@fe0183b78b3495324e6769e340c3bd80f91e7f8e
+tensorboard
+wandb
+typing-extensions

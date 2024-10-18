@@ -1,17 +1,22 @@
 import json
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 from glob import glob
+from os import PathLike
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Union
+from typing import TypedDict
 
 import numpy
+import torch
+from torch import Tensor
 from torch.utils.data import ConcatDataset, Dataset
 from torch.utils.data._utils.collate import default_convert
 
-from yukarin_sosoa.config import DatasetConfig
-from yukarin_sosoa.data.phoneme import OjtPhoneme
-from yukarin_sosoa.data.sampling_data import SamplingData
+from .config import DatasetConfig
+from .data.phoneme import OjtPhoneme
+from .data.sampling_data import SamplingData
+from .utility.dataset_utility import CachePath
 
 mora_phoneme_list = ["a", "i", "u", "e", "o", "A", "I", "U", "E", "O", "N", "cl", "pau"]
 voiced_phoneme_list = (
@@ -19,6 +24,51 @@ voiced_phoneme_list = (
     + ["n", "m", "y", "r", "w", "g", "z", "j", "d", "b"]
     + ["ny", "my", "ry", "gy", "by", "gw"]
 )
+
+
+@dataclass
+class DatasetInput:
+    f0: SamplingData
+    phoneme: SamplingData
+    spec: SamplingData
+    silence: SamplingData
+    phoneme_list: list[OjtPhoneme] | None
+    volume: SamplingData | None
+
+
+@dataclass
+class LazyDatasetInput:
+    f0_path: PathLike
+    phoneme_path: PathLike
+    spec_path: PathLike
+    silence_path: PathLike
+    phoneme_list_path: PathLike | None
+    volume_path: PathLike | None
+
+    def generate(self):
+        return DatasetInput(
+            f0=SamplingData.load(self.f0_path),
+            phoneme=SamplingData.load(self.phoneme_path),
+            spec=SamplingData.load(self.spec_path),
+            silence=SamplingData.load(self.silence_path),
+            phoneme_list=(
+                OjtPhoneme.load_julius_list(self.phoneme_list_path, verify=False)
+                if self.phoneme_list_path is not None
+                else None
+            ),
+            volume=(
+                SamplingData.load(self.volume_path)
+                if self.volume_path is not None
+                else None
+            ),
+        )
+
+
+class DatasetOutput(TypedDict):
+    f0: Tensor
+    phoneme: Tensor
+    spec: Tensor
+    speaker_id: Tensor | None
 
 
 class F0ProcessMode(str, Enum):
@@ -31,8 +81,8 @@ class F0ProcessMode(str, Enum):
 def f0_mean(
     f0: numpy.ndarray,
     rate: float,
-    split_second_list: List[float],
-    weight: Optional[numpy.ndarray],
+    split_second_list: list[float],
+    weight: numpy.ndarray | None,
 ):
     indexes = numpy.floor(numpy.array(split_second_list) * rate).astype(int)
     if weight is None:
@@ -63,196 +113,141 @@ def get_notsilence_range(silence: numpy.ndarray, prepost_silence_length: int):
     return range(pre_index, post_index)
 
 
-@dataclass
-class Input:
-    f0: SamplingData
-    phoneme: SamplingData
-    spec: SamplingData
-    silence: SamplingData
-    phoneme_list: Optional[List[OjtPhoneme]]
-    volume: Optional[SamplingData]
+def preprocess(
+    d: DatasetInput,
+    prepost_silence_length: int,
+    max_sampling_length: int,
+    f0_process_mode: F0ProcessMode,
+    time_mask_max_second: float,
+    time_mask_rate: float,
+):
+    rate = d.spec.rate
 
+    f0 = d.f0.resample(rate)
+    phoneme = d.phoneme.resample(rate)
+    silence = d.silence.resample(rate)
+    volume = d.volume.resample(rate) if d.volume is not None else None
+    spec = d.spec.array
 
-@dataclass
-class LazyInput:
-    f0_path: Path
-    phoneme_path: Path
-    spec_path: Path
-    silence_path: Path
-    phoneme_list_path: Optional[Path]
-    volume_path: Optional[Path]
+    assert numpy.abs(len(spec) - len(f0)) < 5
+    assert numpy.abs(len(spec) - len(phoneme)) < 5
+    assert numpy.abs(len(spec) - len(silence)) < 5
+    assert volume is None or numpy.abs(len(spec) - len(silence)) < 5
 
-    def generate(self):
-        return Input(
-            f0=SamplingData.load(self.f0_path),
-            phoneme=SamplingData.load(self.phoneme_path),
-            spec=SamplingData.load(self.spec_path),
-            silence=SamplingData.load(self.silence_path),
-            phoneme_list=(
-                self.phoneme_class.load_julius_list(
-                    self.phoneme_list_path, verify=False
-                )
-                if self.phoneme_list_path is not None
-                else None
-            ),
-            volume=(
-                SamplingData.load(self.volume_path)
-                if self.volume_path is not None
-                else None
-            ),
+    length = min(len(spec), len(f0), len(phoneme), len(silence))
+    if volume is not None:
+        length = min(length, len(volume))
+
+    # 最初と最後の無音を除去する
+    notsilence_range = get_notsilence_range(
+        silence=silence[:length],
+        prepost_silence_length=prepost_silence_length,
+    )
+    f0 = f0[notsilence_range]
+    silence = silence[notsilence_range]
+    phoneme = phoneme[notsilence_range]
+    spec = spec[notsilence_range]
+    if volume is not None:
+        volume = volume[notsilence_range]
+    length = len(f0)
+
+    # サンプリング長調整
+    if length > max_sampling_length:
+        offset = numpy.random.randint(length - max_sampling_length + 1)
+        offset_slice = slice(offset, offset + max_sampling_length)
+        f0 = f0[offset_slice]
+        silence = silence[offset_slice]
+        phoneme = phoneme[offset_slice]
+        spec = spec[offset_slice]
+        if volume is not None:
+            volume = volume[offset_slice]
+        length = max_sampling_length
+
+    if f0_process_mode == F0ProcessMode.normal:
+        pass
+    else:
+        assert d.phoneme_list is not None
+        weight = volume
+
+        if f0_process_mode == F0ProcessMode.phoneme_mean:
+            split_second_list = [p.end for p in d.phoneme_list[:-1]]
+        else:
+            split_second_list = [
+                p.end for p in d.phoneme_list[:-1] if p.phoneme in mora_phoneme_list
+            ]
+
+        if f0_process_mode == F0ProcessMode.voiced_mora_mean:
+            if weight is None:
+                weight = numpy.ones_like(f0)
+
+            for p in d.phoneme_list:
+                if p.phoneme not in voiced_phoneme_list:
+                    weight[int(p.start * rate) : int(p.end * rate)] = 0
+
+        weight = weight[:length]
+
+        f0 = f0_mean(
+            f0=f0,
+            rate=rate,
+            split_second_list=split_second_list,
+            weight=weight,
         )
 
+    if silence.ndim == 2:
+        silence = numpy.squeeze(silence, axis=1)
 
-class FeatureDataset(Dataset):
+    if time_mask_max_second > 0 and time_mask_rate > 0:
+        expected_num = time_mask_rate * length
+        num = int(expected_num) + int(
+            numpy.random.rand() < (expected_num - int(expected_num))
+        )
+        for _ in range(num):
+            mask_length = numpy.random.randint(int(rate * time_mask_max_second))
+            mask_offset = numpy.random.randint(len(f0) - mask_length + 1)
+            f0[mask_offset : mask_offset + mask_length] = 0
+            phoneme[mask_offset : mask_offset + mask_length] = 0
+
+    output_data = DatasetOutput(
+        f0=torch.from_numpy(f0).float(),
+        phoneme=torch.from_numpy(phoneme).float(),
+        spec=torch.from_numpy(spec).float(),
+        speaker_id=None,
+    )
+    return output_data
+
+
+class FeatureTargetDataset(Dataset):
     def __init__(
         self,
-        inputs: Sequence[Union[Input, LazyInput]],
+        datas: list[DatasetInput | LazyDatasetInput],
         prepost_silence_length: int,
         max_sampling_length: int,
         f0_process_mode: F0ProcessMode,
         time_mask_max_second: float,
         time_mask_rate: float,
     ):
-        self.inputs = inputs
-        self.prepost_silence_length = prepost_silence_length
-        self.max_sampling_length = max_sampling_length
-        self.f0_process_mode = f0_process_mode
-        self.time_mask_max_second = time_mask_max_second
-        self.time_mask_rate = time_mask_rate
-
-    @staticmethod
-    def extract_input(
-        f0_data: SamplingData,
-        phoneme_data: SamplingData,
-        spec_data: SamplingData,
-        silence_data: SamplingData,
-        phoneme_list_data: Optional[List[OjtPhoneme]],
-        volume_data: Optional[SamplingData],
-        prepost_silence_length: int,
-        max_sampling_length: int,
-        f0_process_mode: F0ProcessMode,
-        time_mask_max_second: float,
-        time_mask_rate: float,
-    ):
-        rate = spec_data.rate
-
-        f0 = f0_data.resample(rate)
-        phoneme = phoneme_data.resample(rate)
-        silence = silence_data.resample(rate)
-        volume = volume_data.resample(rate) if volume_data is not None else None
-        spec = spec_data.array
-
-        assert numpy.abs(len(spec) - len(f0)) < 5
-        assert numpy.abs(len(spec) - len(phoneme)) < 5
-        assert numpy.abs(len(spec) - len(silence)) < 5
-        assert volume is None or numpy.abs(len(spec) - len(silence)) < 5
-
-        length = min(len(spec), len(f0), len(phoneme), len(silence))
-        if volume is not None:
-            length = min(length, len(volume))
-
-        # 最初と最後の無音を除去する
-        notsilence_range = get_notsilence_range(
-            silence=silence[:length],
+        self.datas = datas
+        self.preprocessor = partial(
+            preprocess,
             prepost_silence_length=prepost_silence_length,
-        )
-        f0 = f0[notsilence_range]
-        silence = silence[notsilence_range]
-        phoneme = phoneme[notsilence_range]
-        spec = spec[notsilence_range]
-        if volume is not None:
-            volume = volume[notsilence_range]
-        length = len(f0)
-
-        # サンプリング長調整
-        if length > max_sampling_length:
-            offset = numpy.random.randint(length - max_sampling_length + 1)
-            offset_slice = slice(offset, offset + max_sampling_length)
-            f0 = f0[offset_slice]
-            silence = silence[offset_slice]
-            phoneme = phoneme[offset_slice]
-            spec = spec[offset_slice]
-            if volume is not None:
-                volume = volume[offset_slice]
-            length = max_sampling_length
-
-        if f0_process_mode == F0ProcessMode.normal:
-            pass
-        else:
-            assert phoneme_list_data is not None
-            weight = volume
-
-            if f0_process_mode == F0ProcessMode.phoneme_mean:
-                split_second_list = [p.end for p in phoneme_list_data[:-1]]
-            else:
-                split_second_list = [
-                    p.end
-                    for p in phoneme_list_data[:-1]
-                    if p.phoneme in mora_phoneme_list
-                ]
-
-            if f0_process_mode == F0ProcessMode.voiced_mora_mean:
-                if weight is None:
-                    weight = numpy.ones_like(f0)
-
-                for p in phoneme_list_data:
-                    if p.phoneme not in voiced_phoneme_list:
-                        weight[int(p.start * rate) : int(p.end * rate)] = 0
-
-            weight = weight[:length]
-
-            f0 = f0_mean(
-                f0=f0,
-                rate=rate,
-                split_second_list=split_second_list,
-                weight=weight,
-            )
-
-        if silence.ndim == 2:
-            silence = numpy.squeeze(silence, axis=1)
-
-        if time_mask_max_second > 0 and time_mask_rate > 0:
-            expected_num = time_mask_rate * length
-            num = int(expected_num) + int(
-                numpy.random.rand() < (expected_num - int(expected_num))
-            )
-            for _ in range(num):
-                mask_length = numpy.random.randint(int(rate * time_mask_max_second))
-                mask_offset = numpy.random.randint(len(f0) - mask_length + 1)
-                f0[mask_offset : mask_offset + mask_length] = 0
-                phoneme[mask_offset : mask_offset + mask_length] = 0
-
-        return dict(
-            f0=f0.astype(numpy.float32),
-            phoneme=phoneme.astype(numpy.float32),
-            spec=spec.astype(numpy.float32),
+            max_sampling_length=max_sampling_length,
+            f0_process_mode=f0_process_mode,
+            time_mask_max_second=time_mask_max_second,
+            time_mask_rate=time_mask_rate,
         )
 
     def __len__(self):
-        return len(self.inputs)
+        return len(self.datas)
 
     def __getitem__(self, i):
-        input = self.inputs[i]
-        if isinstance(input, LazyInput):
-            input = input.generate()
-
-        return self.extract_input(
-            f0_data=input.f0,
-            phoneme_data=input.phoneme,
-            spec_data=input.spec,
-            silence_data=input.silence,
-            phoneme_list_data=input.phoneme_list,
-            volume_data=input.volume,
-            prepost_silence_length=self.prepost_silence_length,
-            max_sampling_length=self.max_sampling_length,
-            f0_process_mode=self.f0_process_mode,
-            time_mask_max_second=self.time_mask_max_second,
-            time_mask_rate=self.time_mask_rate,
-        )
+        data = self.datas[i]
+        if isinstance(data, LazyDatasetInput):
+            data = data.generate()
+        return self.preprocessor(data)
 
 
 class SpeakerFeatureDataset(Dataset):
-    def __init__(self, dataset: FeatureDataset, speaker_ids: List[int]):
+    def __init__(self, dataset: FeatureTargetDataset, speaker_ids: list[int]):
         assert len(dataset) == len(speaker_ids)
         self.dataset = dataset
         self.speaker_ids = speaker_ids
@@ -262,15 +257,15 @@ class SpeakerFeatureDataset(Dataset):
 
     def __getitem__(self, i):
         d = self.dataset[i]
-        d["speaker_id"] = numpy.array(self.speaker_ids[i], dtype=numpy.int64)
+        d["speaker_id"] = torch.from_numpy(numpy.array(self.speaker_ids[i])).long()
         return d
 
 
 class UnbalancedSpeakerFeatureDataset(SpeakerFeatureDataset):
     def __init__(
         self,
-        dataset: FeatureDataset,
-        speaker_ids: List[int],
+        dataset: FeatureTargetDataset,
+        speaker_ids: list[int],
         weighted_speaker_id: int,
         weight: int,
     ):
@@ -321,7 +316,7 @@ def create_dataset(config: DatasetConfig):
     silence_paths = {Path(p).stem: Path(p) for p in glob(config.silence_glob)}
     assert set(fn_list) == set(silence_paths.keys())
 
-    phoneme_list_paths: Optional[Dict[str, Path]] = None
+    phoneme_list_paths: dict[str, Path] | None = None
     if config.phoneme_list_glob is not None:
         phoneme_list_paths = {
             Path(p).stem: Path(p) for p in glob(config.phoneme_list_glob)
@@ -329,15 +324,15 @@ def create_dataset(config: DatasetConfig):
         fn_list = sorted(phoneme_list_paths.keys())
         assert len(fn_list) > 0
 
-    volume_paths: Optional[Dict[str, Path]] = None
+    volume_paths: dict[str, Path] | None = None
     if config.volume_glob is not None:
         volume_paths = {Path(p).stem: Path(p) for p in glob(config.volume_glob)}
         fn_list = sorted(volume_paths.keys())
         assert len(fn_list) > 0
 
-    speaker_ids: Optional[Dict[str, int]] = None
+    speaker_ids: dict[str, int] | None = None
     if config.speaker_dict_path is not None:
-        fn_each_speaker: Dict[str, List[str]] = json.loads(
+        fn_each_speaker: dict[str, list[str]] = json.loads(
             config.speaker_dict_path.read_text()
         )
         assert config.num_speaker == len(fn_each_speaker)
@@ -355,28 +350,32 @@ def create_dataset(config: DatasetConfig):
     trains = fn_list[test_num:]
     tests = fn_list[:test_num]
 
-    def _dataset(fns, for_test=False):
+    def _dataset(fns, for_eval=False):
         inputs = [
-            LazyInput(
-                f0_path=f0_paths[fn],
-                phoneme_path=phoneme_paths[fn],
-                spec_path=spec_paths[fn],
-                silence_path=silence_paths[fn],
+            LazyDatasetInput(
+                f0_path=CachePath(f0_paths[fn]),
+                phoneme_path=CachePath(phoneme_paths[fn]),
+                spec_path=CachePath(spec_paths[fn]),
+                silence_path=CachePath(silence_paths[fn]),
                 phoneme_list_path=(
-                    phoneme_list_paths[fn] if phoneme_list_paths is not None else None
+                    CachePath(phoneme_list_paths[fn])
+                    if phoneme_list_paths is not None
+                    else None
                 ),
-                volume_path=volume_paths[fn] if volume_paths is not None else None,
+                volume_path=(
+                    CachePath(volume_paths[fn]) if volume_paths is not None else None
+                ),
             )
             for fn in fns
         ]
 
-        dataset = FeatureDataset(
-            inputs=inputs,
+        dataset = FeatureTargetDataset(
+            datas=inputs,
             prepost_silence_length=config.prepost_silence_length,
             max_sampling_length=config.max_sampling_length,
             f0_process_mode=F0ProcessMode(config.f0_process_mode),
-            time_mask_max_second=(config.time_mask_max_second if not for_test else 0),
-            time_mask_rate=(config.time_mask_rate if not for_test else 0),
+            time_mask_max_second=(config.time_mask_max_second if not for_eval else 0),
+            time_mask_rate=(config.time_mask_rate if not for_eval else 0),
         )
 
         if speaker_ids is not None:
@@ -395,7 +394,7 @@ def create_dataset(config: DatasetConfig):
 
         dataset = TensorWrapperDataset(dataset)
 
-        if for_test:
+        if for_eval:
             dataset = ConcatDataset([dataset] * config.test_trial_num)
 
         return dataset
@@ -406,7 +405,8 @@ def create_dataset(config: DatasetConfig):
 
     return {
         "train": _dataset(trains),
-        "test": _dataset(tests, for_test=True),
+        "test": _dataset(tests, for_eval=False),
+        "eval": _dataset(tests, for_eval=True),
         "valid": valid_dataset,
     }
 
@@ -431,7 +431,7 @@ def create_validation_dataset(config: DatasetConfig):
     silence_paths = {Path(p).stem: Path(p) for p in glob(config.valid_silence_glob)}
     assert set(fn_list) == set(silence_paths.keys())
 
-    phoneme_list_paths: Optional[Dict[str, Path]] = None
+    phoneme_list_paths: dict[str, Path] | None = None
     if config.valid_phoneme_list_glob is not None:
         phoneme_list_paths = {
             Path(p).stem: Path(p) for p in glob(config.valid_phoneme_list_glob)
@@ -439,15 +439,15 @@ def create_validation_dataset(config: DatasetConfig):
         fn_list = sorted(phoneme_list_paths.keys())
         assert len(fn_list) > 0
 
-    volume_paths: Optional[Dict[str, Path]] = None
+    volume_paths: dict[str, Path] | None = None
     if config.valid_volume_glob is not None:
         volume_paths = {Path(p).stem: Path(p) for p in glob(config.valid_volume_glob)}
         fn_list = sorted(volume_paths.keys())
         assert len(fn_list) > 0
 
-    speaker_ids: Optional[Dict[str, int]] = None
+    speaker_ids: dict[str, int] | None = None
     if config.valid_speaker_dict_path is not None:
-        fn_each_speaker: Dict[str, List[str]] = json.loads(
+        fn_each_speaker: dict[str, list[str]] = json.loads(
             config.valid_speaker_dict_path.read_text()
         )
 
@@ -463,21 +463,25 @@ def create_validation_dataset(config: DatasetConfig):
     valids = fn_list[: config.valid_num]
 
     inputs = [
-        LazyInput(
-            f0_path=f0_paths[fn],
-            phoneme_path=phoneme_paths[fn],
-            spec_path=spec_paths[fn],
-            silence_path=silence_paths[fn],
+        LazyDatasetInput(
+            f0_path=CachePath(f0_paths[fn]),
+            phoneme_path=CachePath(phoneme_paths[fn]),
+            spec_path=CachePath(spec_paths[fn]),
+            silence_path=CachePath(silence_paths[fn]),
             phoneme_list_path=(
-                phoneme_list_paths[fn] if phoneme_list_paths is not None else None
+                CachePath(phoneme_list_paths[fn])
+                if phoneme_list_paths is not None
+                else None
             ),
-            volume_path=volume_paths[fn] if volume_paths is not None else None,
+            volume_path=(
+                CachePath(volume_paths[fn]) if volume_paths is not None else None
+            ),
         )
         for fn in valids
     ]
 
-    dataset = FeatureDataset(
-        inputs=inputs,
+    dataset = FeatureTargetDataset(
+        datas=inputs,
         prepost_silence_length=config.prepost_silence_length,
         max_sampling_length=config.max_sampling_length,
         f0_process_mode=F0ProcessMode(config.f0_process_mode),

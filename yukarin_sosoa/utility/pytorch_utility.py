@@ -1,17 +1,12 @@
 from copy import deepcopy
 from typing import Any, Callable, Dict
 
+import numpy
 import torch
 import torch_optimizer
-from pytorch_trainer.dataset import convert
-from pytorch_trainer.training.updaters.standard_updater import StandardUpdater
 from torch import nn, optim
+from torch.optim.lr_scheduler import _LRScheduler
 from torch.optim.optimizer import Optimizer
-
-try:
-    from torch.cuda import amp
-except ImportError:
-    pass
 
 
 def init_weights(model: torch.nn.Module, name: str):
@@ -59,47 +54,94 @@ def make_optimizer(config_dict: Dict[str, Any], model: nn.Module):
         optimizer = torch_optimizer.Ranger(model.parameters(), **cp)
     elif n == "sgd":
         optimizer = optim.SGD(model.parameters(), **cp)
+    elif n == "true_adamw":
+        cp["weight_decay"] /= cp["lr"]
+        optimizer = optim.AdamW(model.parameters(), **cp)
     else:
         raise ValueError(n)
 
     return optimizer
 
 
-class AmpUpdater(StandardUpdater):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.scaler = amp.GradScaler()
+class WarmupLR(_LRScheduler):
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        warmup_steps: int,
+        last_epoch: int = -1,
+    ):
+        self.warmup_steps = warmup_steps
+        super().__init__(optimizer, last_epoch)
 
-    def update_core(self):
-        iterator = self._iterators["main"]
-        batch = iterator.next()
-        in_arrays = convert._call_converter(self.converter, batch, self.device)
+    def get_lr(self):
+        step_num = self.last_epoch + 1
+        return [
+            lr
+            * self.warmup_steps**0.5
+            * min(step_num**-0.5, step_num * self.warmup_steps**-1.5)
+            for lr in self.base_lrs
+        ]
 
-        optimizer = self._optimizers["main"]
-        model = self._models["main"]
-        loss_func = self.loss_func or model
 
-        for model in self._models.values():
-            model.train()
-        optimizer.zero_grad()
+def make_scheduler(config_dict: Dict[str, Any], optimizer: Optimizer, last_epoch: int):
+    cp: Dict[str, Any] = deepcopy(config_dict)
+    n = cp.pop("name").lower()
 
-        with amp.autocast():
-            if isinstance(in_arrays, tuple):
-                loss = loss_func(*in_arrays)
-            elif isinstance(in_arrays, dict):
-                loss = loss_func(**in_arrays)
-            else:
-                loss = loss_func(in_arrays)
+    scheduler: optim.lr_scheduler._LRScheduler
+    if n == "step":
+        scheduler = optim.lr_scheduler.StepLR(optimizer, last_epoch=last_epoch, **cp)
+    elif n == "warmup":
+        scheduler = WarmupLR(optimizer, last_epoch=last_epoch, **cp)
+    else:
+        raise ValueError(n)
 
-        self.scaler.scale(loss).backward()
-        self.scaler.step(optimizer)
-        self.scaler.update()
+    return scheduler
 
-    def state_dict(self):
-        state_dict = super().state_dict()
-        state_dict["scaler"] = self.scaler.state_dict()
-        return state_dict
 
-    def load_state_dict(self, state_dict):
-        super().load_state_dict(state_dict)
-        self.scaler.load_state_dict(state_dict["scaler"])
+def detach_cpu(data):
+    elem_type = type(data)
+    if isinstance(data, torch.Tensor):
+        return data.detach().cpu()
+    elif isinstance(data, numpy.ndarray):
+        return torch.as_tensor(data)
+    elif isinstance(data, dict):
+        try:
+            return elem_type({key: detach_cpu(data[key]) for key in data})
+        except TypeError:
+            return {key: detach_cpu(data[key]) for key in data}
+    elif isinstance(data, (list, tuple)):
+        try:
+            return elem_type([detach_cpu(d) for d in data])
+        except TypeError:
+            return [detach_cpu(d) for d in data]
+    else:
+        return data
+
+
+def to_device(batch, device, non_blocking=False):
+    if isinstance(batch, dict):
+        return {
+            key: to_device(value, device, non_blocking) for key, value in batch.items()
+        }
+    elif isinstance(batch, (list, tuple)):
+        return type(batch)(to_device(value, device, non_blocking) for value in batch)
+    elif isinstance(batch, torch.Tensor):
+        return batch.to(device, non_blocking=non_blocking)
+    else:
+        return batch
+
+
+def collate_list(batch):
+    if not batch:
+        raise ValueError("batch is empty")
+
+    first_elem = batch[0]
+
+    if isinstance(first_elem, dict):
+        result = {}
+        for key in first_elem:
+            result[key] = [example[key] for example in batch]
+        return result
+
+    else:
+        raise ValueError(type(first_elem))

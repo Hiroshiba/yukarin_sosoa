@@ -1,6 +1,8 @@
-FROM pytorch/pytorch:1.7.1-cuda11.0-cudnn8-runtime
+FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
 SHELL ["/bin/bash", "-c"]
 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Tokyo
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 RUN apt-get update --fix-missing && \
     apt-get install -y wget bzip2 ca-certificates curl git sudo && \
@@ -13,13 +15,6 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# optuna
-RUN apt-get update && \
-    apt-get install -y gcc mysql-client python3-dev libmysqlclient-dev && \
-    apt-get clean && \
-    pip install optuna mysqlclient
-
 # install requirements
 COPY requirements.txt /app/
-COPY requirements_dev.txt /app/
-RUN pip install -r <(cat requirements.txt | grep -x -v torch) -r requirements_dev.txt
+RUN pip install -r <(cat requirements.txt | grep -x -v 'torch')
