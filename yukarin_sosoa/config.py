@@ -47,6 +47,7 @@ class NetworkConfig:
     speaker_embedding_size: int
     hidden_size: int
     block_num: int
+    dropout_rate: float
 
 
 @dataclass
@@ -106,3 +107,6 @@ def backward_compatible(d: Dict[str, Any]):
 
     if "max_sampling_length" not in d["dataset"]:
         d["dataset"]["max_sampling_length"] = 99999999
+
+    if "dropout_rate" not in d["network"]:
+        d["network"]["dropout_rate"] = 0.2
