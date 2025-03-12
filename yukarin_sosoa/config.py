@@ -108,5 +108,28 @@ def backward_compatible(d: Dict[str, Any]):
     if "max_sampling_length" not in d["dataset"]:
         d["dataset"]["max_sampling_length"] = 99999999
 
+    if "eval_batch_size" not in d["train"]:
+        d["train"]["eval_batch_size"] = d["train"]["batch_size"]
+    if "log_iteration" in d["train"]:
+        d["train"]["log_epoch"] = d["train"].pop("log_iteration")
+    if "eval_iteration" in d["train"]:
+        d["train"]["eval_epoch"] = d["train"].pop("eval_iteration")
+    if "snapshot_iteration" in d["train"]:
+        d["train"]["snapshot_epoch"] = d["train"].pop("snapshot_iteration")
+    if "stop_iteration" in d["train"]:
+        d["train"]["stop_epoch"] = d["train"].pop("stop_iteration")
+    if "model_save_num" not in d["train"]:
+        d["train"]["model_save_num"] = 99999999
+    if "scheduler" not in d["train"]:
+        d["train"]["scheduler"] = {}
+    if "step_shift" in d["train"]:
+        del d["train"]["step_shift"]
+    if "noam_shift" in d["train"]:
+        del d["train"]["noam_shift"]
+    if "use_multithread" in d["train"]:
+        del d["train"]["use_multithread"]
+    if "optuna" in d["train"]:
+        del d["train"]["optuna"]
+
     if "dropout_rate" not in d["network"]:
         d["network"]["dropout_rate"] = 0.2
