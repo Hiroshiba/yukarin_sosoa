@@ -1,9 +1,0 @@
-numpy
-scipy
-librosa
-tqdm
-torch
-torch_optimizer
-tensorboard
-wandb
-typing-extensions

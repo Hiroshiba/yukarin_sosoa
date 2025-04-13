@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04
 SHELL ["/bin/bash", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -16,5 +16,6 @@ RUN apt-get update && \
 WORKDIR /app
 
 # install requirements
-COPY requirements.txt /app/
-RUN pip install -r <(cat requirements.txt | grep -x -v 'torch')
+COPY --from=ghcr.io/astral-sh/uv:0.6.14 /uv /uvx /bin/
+COPY pyproject.toml uv.lock /app/
+RUN uv sync
