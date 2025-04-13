@@ -9,12 +9,13 @@ from .utility.git_utility import get_branch_name, get_commit_id
 
 @dataclass
 class DatasetConfig:
-    f0_glob: str
-    phoneme_glob: str
-    spec_glob: str
-    silence_glob: str
-    phoneme_list_glob: Optional[str]
-    volume_glob: Optional[str]
+    root_dir: Path
+    f0_pathlist_path: Path
+    phoneme_pathlist_path: Path
+    spec_pathlist_path: Path
+    silence_pathlist_path: Path
+    phoneme_list_pathlist_path: Optional[Path]
+    volume_pathlist_path: Optional[Path]
     prepost_silence_length: int
     max_sampling_length: int
     f0_process_mode: str
@@ -27,12 +28,12 @@ class DatasetConfig:
     speaker_weight: Optional[int]
     test_num: int
     test_trial_num: int = 1
-    valid_f0_glob: Optional[str] = None
-    valid_phoneme_glob: Optional[str] = None
-    valid_spec_glob: Optional[str] = None
-    valid_silence_glob: Optional[str] = None
-    valid_phoneme_list_glob: Optional[str] = None
-    valid_volume_glob: Optional[str] = None
+    valid_f0_pathlist_path: Optional[Path] = None
+    valid_phoneme_pathlist_path: Optional[Path] = None
+    valid_spec_pathlist_path: Optional[Path] = None
+    valid_silence_pathlist_path: Optional[Path] = None
+    valid_phoneme_list_pathlist_path: Optional[Path] = None
+    valid_volume_pathlist_path: Optional[Path] = None
     valid_speaker_dict_path: Optional[Path] = None
     valid_trial_num: Optional[int] = None
     valid_num: Optional[int] = None
@@ -133,3 +134,23 @@ def backward_compatible(d: Dict[str, Any]):
 
     if "dropout_rate" not in d["network"]:
         d["network"]["dropout_rate"] = 0.2
+
+    if "root_dir" not in d["dataset"]:
+        d["dataset"]["root_dir"] = Path(".")
+    for before_key in [
+        "f0_glob",
+        "phoneme_glob",
+        "spec_glob",
+        "silence_glob",
+        "phoneme_list_glob",
+        "volume_glob",
+        "valid_f0_glob",
+        "valid_phoneme_glob",
+        "valid_spec_glob",
+        "valid_silence_glob",
+        "valid_phoneme_list_glob",
+        "valid_volume_glob",
+    ]:
+        if before_key in d["dataset"]:
+            after_key = before_key.replace("_glob", "_pathlist_path")
+            d["dataset"][after_key] = d["dataset"].pop(before_key)

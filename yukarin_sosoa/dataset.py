@@ -2,7 +2,6 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
-from glob import glob
 from os import PathLike
 from pathlib import Path
 from typing import TypedDict
@@ -17,6 +16,7 @@ from .config import DatasetConfig
 from .data.phoneme import OjtPhoneme
 from .data.sampling_data import SamplingData
 from .utility.dataset_utility import CachePath
+
 
 mora_phoneme_list = ["a", "i", "u", "e", "o", "A", "I", "U", "E", "O", "N", "cl", "pau"]
 voiced_phoneme_list = (
@@ -302,31 +302,36 @@ class TensorWrapperDataset(Dataset):
         return default_convert(self.dataset[i])
 
 
+def _load_pathlist(path: Path, root_dir: Path) -> dict[str, Path]:
+    path_list = [root_dir / p for p in path.read_text().splitlines()]
+    return {p.stem: p for p in path_list}
+
+
 def create_dataset(config: DatasetConfig):
-    f0_paths = {Path(p).stem: Path(p) for p in glob(config.f0_glob)}
+    f0_paths = _load_pathlist(config.f0_pathlist_path, config.root_dir)
     fn_list = sorted(f0_paths.keys())
     assert len(fn_list) > 0
 
-    phoneme_paths = {Path(p).stem: Path(p) for p in glob(config.phoneme_glob)}
+    phoneme_paths = _load_pathlist(config.phoneme_pathlist_path, config.root_dir)
     assert set(fn_list) == set(phoneme_paths.keys())
 
-    spec_paths = {Path(p).stem: Path(p) for p in glob(config.spec_glob)}
+    spec_paths = _load_pathlist(config.spec_pathlist_path, config.root_dir)
     assert set(fn_list) == set(spec_paths.keys())
 
-    silence_paths = {Path(p).stem: Path(p) for p in glob(config.silence_glob)}
+    silence_paths = _load_pathlist(config.silence_pathlist_path, config.root_dir)
     assert set(fn_list) == set(silence_paths.keys())
 
     phoneme_list_paths: dict[str, Path] | None = None
-    if config.phoneme_list_glob is not None:
-        phoneme_list_paths = {
-            Path(p).stem: Path(p) for p in glob(config.phoneme_list_glob)
-        }
+    if config.phoneme_list_pathlist_path is not None:
+        phoneme_list_paths = _load_pathlist(
+            config.phoneme_list_pathlist_path, config.root_dir
+        )
         fn_list = sorted(phoneme_list_paths.keys())
         assert len(fn_list) > 0
 
     volume_paths: dict[str, Path] | None = None
-    if config.volume_glob is not None:
-        volume_paths = {Path(p).stem: Path(p) for p in glob(config.volume_glob)}
+    if config.volume_pathlist_path is not None:
+        volume_paths = _load_pathlist(config.volume_pathlist_path, config.root_dir)
         fn_list = sorted(volume_paths.keys())
         assert len(fn_list) > 0
 
@@ -412,36 +417,38 @@ def create_dataset(config: DatasetConfig):
 
 
 def create_validation_dataset(config: DatasetConfig):
-    assert config.valid_f0_glob is not None
-    assert config.valid_phoneme_glob is not None
-    assert config.valid_spec_glob is not None
-    assert config.valid_silence_glob is not None
+    assert config.valid_f0_pathlist_path is not None
+    assert config.valid_phoneme_pathlist_path is not None
+    assert config.valid_spec_pathlist_path is not None
+    assert config.valid_silence_pathlist_path is not None
     assert config.valid_trial_num is not None
 
-    f0_paths = {Path(p).stem: Path(p) for p in glob(config.valid_f0_glob)}
+    f0_paths = _load_pathlist(config.valid_f0_pathlist_path, config.root_dir)
     fn_list = sorted(f0_paths.keys())
     assert len(fn_list) > 0
 
-    phoneme_paths = {Path(p).stem: Path(p) for p in glob(config.valid_phoneme_glob)}
+    phoneme_paths = _load_pathlist(config.valid_phoneme_pathlist_path, config.root_dir)
     assert set(fn_list) == set(phoneme_paths.keys())
 
-    spec_paths = {Path(p).stem: Path(p) for p in glob(config.valid_spec_glob)}
+    spec_paths = _load_pathlist(config.valid_spec_pathlist_path, config.root_dir)
     assert set(fn_list) == set(spec_paths.keys())
 
-    silence_paths = {Path(p).stem: Path(p) for p in glob(config.valid_silence_glob)}
+    silence_paths = _load_pathlist(config.valid_silence_pathlist_path, config.root_dir)
     assert set(fn_list) == set(silence_paths.keys())
 
     phoneme_list_paths: dict[str, Path] | None = None
-    if config.valid_phoneme_list_glob is not None:
-        phoneme_list_paths = {
-            Path(p).stem: Path(p) for p in glob(config.valid_phoneme_list_glob)
-        }
+    if config.valid_phoneme_list_pathlist_path is not None:
+        phoneme_list_paths = _load_pathlist(
+            config.valid_phoneme_list_pathlist_path, config.root_dir
+        )
         fn_list = sorted(phoneme_list_paths.keys())
         assert len(fn_list) > 0
 
     volume_paths: dict[str, Path] | None = None
-    if config.valid_volume_glob is not None:
-        volume_paths = {Path(p).stem: Path(p) for p in glob(config.valid_volume_glob)}
+    if config.valid_volume_pathlist_path is not None:
+        volume_paths = _load_pathlist(
+            config.valid_volume_pathlist_path, config.root_dir
+        )
         fn_list = sorted(volume_paths.keys())
         assert len(fn_list) > 0
 
