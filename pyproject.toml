@@ -1,8 +1,19 @@
 [project]
 name = "yukarin_sosoa"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = "~=3.10"
 dependencies = [
+    "librosa",
+    "numpy",
+    "scipy",
+    "tensorboard",
+    "torch",
+    "tqdm",
+    "typing-extensions",
+]
+
+[dependency-groups]
+dev = [
     "librosa>=0.11.0",
     "numpy>=2.2.4",
     "scipy>=1.15.2",
@@ -13,3 +24,6 @@ dependencies = [
     "typing-extensions>=4.13.2",
     "wandb>=0.19.9",
 ]
+
+[tool.setuptools.packages.find]
+include = ["yukarin_sosoa*"]
